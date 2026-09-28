@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     app_env: str = "local"
 
-    database_url: str = "postgresql+psycopg://drawtale:drawtale@localhost:5432/drawtale"
+    database_url: str = "postgresql+psycopg://drawtale:drawtale@127.0.0.1:5433/drawtale"
 
     ai_service_url: str = "http://127.0.0.1:8001"
     ai_use_mock: bool = True
