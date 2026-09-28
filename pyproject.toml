@@ -6,5 +6,9 @@ extend-exclude = ["alembic/versions"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers are meant to be used as argument defaults
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Query", "fastapi.Form"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

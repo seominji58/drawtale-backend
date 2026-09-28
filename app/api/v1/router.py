@@ -1,5 +1,8 @@
 from fastapi import APIRouter
 
-api_router = APIRouter(prefix="/api/v1")
+from app.api.v1 import characters, jobs, stories
 
-# Feature routers (characters, jobs, stories) are included here.
+api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(characters.router)
+api_router.include_router(jobs.router)
+api_router.include_router(stories.router)

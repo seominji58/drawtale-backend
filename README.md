@@ -29,8 +29,9 @@ pip install -r requirements-dev.txt
 # 2. 환경변수
 copy .env.example .env
 
-# 3. 로컬 DB (Docker Desktop 필요)
-docker compose -f docker-compose.local.yml up -d db
+# 3. DB 준비 (둘 중 하나)
+#   a) Azure 공유 DB: .env의 DATABASE_URL을 전달받은 drawtale_dev 주소로 변경
+#   b) 로컬 DB: docker compose up -d db   (Docker Desktop 필요, 포트 5433)
 alembic upgrade head
 
 # 4. 서버 실행
@@ -41,6 +42,23 @@ macOS / Linux: `python3.11 -m venv .venv` → `source .venv/bin/activate`, `cp .
 
 - http://127.0.0.1:8000/health
 - http://127.0.0.1:8000/docs
+- API 계약서: [docs/api-contract.md](docs/api-contract.md)
+
+## Frontend 담당자용: Docker로 Backend 띄우기
+
+Python 설치 없이 Docker Desktop만 있으면 된다. AI는 Mock으로 동작한다.
+
+```bash
+git pull
+cp .env.example .env          # DATABASE_URL을 전달받은 Azure drawtale_dev 주소로 변경
+docker compose --profile app up -d --build
+# → http://127.0.0.1:8000/docs
+```
+
+- 코드가 바뀌면 `git pull` 후 같은 명령을 다시 실행한다. (시작할 때 migration이 자동 적용된다)
+- 로그: `docker compose logs -f backend` · 종료: `docker compose --profile app down`
+- Azure DB 연결이 안 되면 현재 IP가 방화벽에 없는 것이다. https://api.ipify.org 결과를 Backend 담당에게 전달한다.
+- Frontend `.env`: `VITE_API_BASE_URL=http://127.0.0.1:8000`
 
 ## 자주 쓰는 명령
 

@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     ai_use_mock: bool = True
     ai_timeout_seconds: float = 60
 
+    public_base_url: str = "http://127.0.0.1:8000"
+    storage_backend: str = "local"
+    local_storage_dir: str = "./storage"
+    max_upload_mb: int = 10
+
     azure_storage_connection_string: str = ""
     blob_container_uploads: str = "dev-uploads"
     blob_container_results: str = "dev-results"
