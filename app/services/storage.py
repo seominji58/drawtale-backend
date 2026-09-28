@@ -19,6 +19,9 @@ class LocalStorage:
         target.write_bytes(data)
         return path
 
+    def read(self, path: str) -> bytes:
+        return (self.root / path).read_bytes()
+
     def url(self, path: str | None) -> str | None:
         if not path:
             return None

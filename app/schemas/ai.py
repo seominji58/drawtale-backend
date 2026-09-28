@@ -1,8 +1,14 @@
-"""Backend <-> AI internal API contract (/internal/v1/*). Owned jointly with A1."""
+"""Backend <-> AI internal API contract (/internal/v1/*). Owned jointly with A1.
+
+`AIAnalyzeRaw` mirrors what the AI server returns today; `AnalyzeResult` is the normalized
+shape the rest of the Backend uses. Only `app/services/ai_client.py` knows about the raw format.
+"""
 
 from pydantic import BaseModel, Field
 
 from app.schemas.common import BBox, Joint
+
+UNKNOWN = "unknown"
 
 
 class AIMeta(BaseModel):
@@ -14,22 +20,51 @@ class AIMeta(BaseModel):
 
 class AIHealthResponse(BaseModel):
     status: str = Field(examples=["ok"])
-    model_version: str
-    pipeline_version: str
+    model_loaded: bool | None = None
+    model_version: str | None = None
+    pipeline_version: str | None = None
 
 
-class AnalyzeRequest(BaseModel):
-    request_id: str
-    image_url: str = Field(description="원본 이미지 읽기 URL (Blob SAS)")
-    mask_upload_url: str | None = Field(
-        default=None, description="마스크 PNG를 PUT으로 올릴 URL (Blob SAS)"
-    )
+# --- POST /internal/v1/analyze (multipart `file`) -------------------------------------------
 
 
-class AnalyzeResponse(AIMeta):
+class AIBoxRaw(BaseModel):
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
+class AIJointRaw(BaseModel):
+    name: str
+    x: float
+    y: float
+
+
+class AIMaskRaw(BaseModel):
+    width: int
+    height: int
+
+
+class AIAnalyzeRaw(BaseModel):
+    success: bool
+    bbox: AIBoxRaw | None = None
+    joints: list[AIJointRaw] = Field(default_factory=list)
+    mask: AIMaskRaw | None = None
+    message: str | None = None
+    # Required by the contract; optional here until the AI server sends them.
+    model_version: str | None = None
+    pipeline_version: str | None = None
+    coordinate_space: str | None = None
+    processing_time_ms: int | None = None
+
+
+class AnalyzeResult(AIMeta):
     bbox: BBox
     joints: list[Joint]
-    mask_uploaded: bool
+
+
+# --- POST /internal/v1/render (not implemented on the AI side yet) --------------------------
 
 
 class RenderRequest(BaseModel):
@@ -44,6 +79,6 @@ class RenderRequest(BaseModel):
 
 
 class RenderResponse(AIMeta):
-    format: str = Field(examples=["gif"])
+    format: str = Field(examples=["mp4"])
     duration_ms: int
     output_uploaded: bool

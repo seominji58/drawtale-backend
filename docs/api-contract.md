@@ -257,38 +257,37 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 ---
 
-## 3. Internal API (Backend → AI, A1 담당) ⚠ A1 합의 필요
+## 3. Internal API (Backend → AI, A1 담당)
+
+> **2026-09-28 갱신:** A1이 올린 AI 서버(`drawtale-ai` `runtime/`) 기준으로 analyze 형식을 맞췄다.
+> Backend가 AI 응답을 계약 형식으로 변환하므로, 아래 **"현재"** 형식이면 연결된다. **"필요"** 항목은 A1이 추가해야 한다.
 
 - AI 서버는 외부에 공개하지 않는다. Backend만 `AI_SERVICE_URL`(운영: `http://ai:8001`)로 호출한다.
-- 모든 응답에 **필수 메타데이터 4개**: `model_version`, `pipeline_version`, `coordinate_space`, `processing_time_ms`
-- 에러는 Public API와 같은 형식(`{"error": {"code", "message"}}`)으로 준다. Backend가 그대로 Job error로 전달한다.
-- 파일은 **URL로 주고받는다.** Backend가 Blob SAS URL(읽기/쓰기)을 만들어 주면, AI는 읽기 URL에서 다운로드하고 쓰기 URL에 `PUT`으로 업로드한다. AI는 Storage 키를 갖지 않는다.
+- **파일 전달: 당분간 파일 직접 전송(multipart)**. Azure Blob을 붙일 때 URL 방식으로 바꿀지 다시 정한다.
+- 에러: HTTP 200 + `"success": false` + `"message": "CODE: 설명"` 형식을 허용한다. Backend가 `CODE`를 읽어 사용자용 한국어 메시지로 바꾼다. (설명 문구는 사용자에게 보여주지 않는다)
 
 ### 3-1. `GET /internal/v1/health`
 
 ```json
-{ "status": "ok", "model_version": "meta-animated-drawings-pretrained", "pipeline_version": "0.1.0" }
+{ "status": "ok", "model_loaded": true, "model_version": "meta-animated-drawings-pretrained", "pipeline_version": "0.1.0" }
 ```
+
+- 현재: `status`, `model_loaded`(고정값 `false`), `runtime`
+- 필요: `model_loaded`를 실제 TorchServe 상태로, `model_version` · `pipeline_version` 추가
 
 ### 3-2. `POST /internal/v1/analyze`
 
-**요청**
-
-```json
-{
-  "request_id": "b2f38c23-d05e-4b97-b89a-1fd8aeb197c1",
-  "image_url": "https://<storage>/uploads/....png?<SAS>",
-  "mask_upload_url": "https://<storage>/results/.../mask.png?<SAS>"
-}
-```
+**요청** — `multipart/form-data`, 필드 `file` (그림 파일)
 
 **응답 `200`**
 
 ```json
 {
-  "bbox": { "x": 80, "y": 60, "width": 240, "height": 480 },
-  "joints": [ { "name": "hip", "x": 200.0, "y": 324.0 }, "... 15개, 1-1 순서" ],
-  "mask_uploaded": true,
+  "success": true,
+  "bbox": { "left": 80, "top": 60, "right": 320, "bottom": 540 },
+  "joints": [ { "name": "hip", "x": 200, "y": 324 }, "... 15개, 1-1 순서" ],
+  "mask": { "width": 240, "height": 480 },
+  "message": "Analysis complete",
   "model_version": "meta-animated-drawings-pretrained",
   "pipeline_version": "0.1.0",
   "coordinate_space": "image_px",
@@ -296,9 +295,31 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 }
 ```
 
-AI 에러 code 예시 (A1 정의): `NO_CHARACTER_DETECTED`, `MULTIPLE_CHARACTERS`, `MODEL_LOAD_FAILED`
+| 항목 | 현재 | 필요 |
+|---|---|---|
+| 관절 이름 · 순서 | ✅ 1-1과 같음 | - |
+| bbox | ✅ `left/top/right/bottom` (Backend가 `x/y/width/height`로 변환) | - |
+| **좌표 기준** | ❌ 최대 1000px로 줄인 이미지 기준 | **원본 이미지 px로 변환** |
+| 마스크 | ❌ 크기만 반환, 이미지는 버림 | **마스크 이미지 저장** (render에서 사용) |
+| 메타데이터 4개 | ❌ 없음 (Backend가 `unknown`으로 채움) | `model_version`, `pipeline_version`, `coordinate_space`, `processing_time_ms` |
 
-### 3-3. `POST /internal/v1/render`
+**실패 응답 `200`**
+
+```json
+{ "success": false, "message": "NO_CHARACTER_DETECTED: No drawn humanoid detected" }
+```
+
+| AI code | Backend Job error code | 사용자 메시지 |
+|---|---|---|
+| `NO_CHARACTER_DETECTED`, `INVALID_BBOX` | `NO_CHARACTER_DETECTED` | 그림에서 사람 모양 캐릭터를 찾지 못했어요. |
+| `INVALID_IMAGE` | `INVALID_IMAGE` | 이미지를 읽을 수 없어요. |
+| `MODEL_UNAVAILABLE` | `AI_UNAVAILABLE` | AI 서버가 준비되지 않았어요. |
+| 그 외 / code 없음 | `AI_ERROR` | 그림 분석 중 오류가 발생했어요. |
+
+### 3-3. `POST /internal/v1/render` ⬜ AI 미구현 — ⚠ A1과 형식 합의 필요
+
+> 핵심 조건: **analyze가 준 관절이 아니라, Backend가 보낸 관절(사용자 보정 반영)로 렌더링**해야 한다.
+> 결과 형식은 **MP4**로 한다. 아래는 초안이며, 파일 전달 방식(직접 전송 vs URL)에 맞춰 바뀔 수 있다.
 
 **요청**
 
@@ -329,7 +350,6 @@ AI 에러 code 예시 (A1 정의): `NO_CHARACTER_DETECTED`, `MULTIPLE_CHARACTERS
 
 > ⚠ `motion` 값 목록 (Meta 예시 motion 기준 후보: `wave_hello`, `jumping`, `jumping_jacks`, `dab`, `zombie`)과
 > 이야기의 `action` → `motion` 매핑 방식은 A1과 정해야 한다.
-> ⚠ 결과 형식 `gif` / `mp4` 중 무엇을 쓸지 정해야 한다.
 
 ---
 
@@ -337,12 +357,12 @@ AI 에러 code 예시 (A1 정의): `NO_CHARACTER_DETECTED`, `MULTIPLE_CHARACTERS
 
 | # | 항목 | 현재 초안 | 누구와 |
 |---|---|---|---|
-| 1 | 관절 15개 이름·순서 | Meta skeleton − root | A1 |
+| 1 | 관절 15개 이름·순서 | Meta skeleton − root — ✅ A1 코드와 일치 | A1 |
 | 2 | 좌표 기준 | 원본 이미지 px, 왼쪽 위 원점 | A1, Frontend |
 | 3 | 이야기 4단계 값 형식 | 자유 문자열 50자 | Frontend |
 | 4 | polling 간격 | 1~2초 | Frontend |
-| 5 | 파일 전달 방식 | Blob SAS URL (AI는 키 없음) | A1 |
+| 5 | 파일 전달 방식 | 당분간 파일 직접 전송, Blob 연결 시 재검토 | A1 |
 | 6 | motion 목록, action→motion 매핑 | Meta 예시 motion | A1 |
-| 7 | 애니메이션 형식 | gif 또는 mp4 | A1, Frontend |
-| 8 | AI 에러 code 목록 | 3-2 예시 | A1 |
+| 7 | 애니메이션 형식 | MP4 (A1 PoC 기준) | A1, Frontend |
+| 8 | AI 에러 code 목록 | 3-2 표 (A1 코드 기준) | A1 |
 | 9 | 로그인/세션 | 없음 (비회원) | 전원 |

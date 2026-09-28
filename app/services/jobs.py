@@ -7,7 +7,7 @@ from app.core.errors import AppError
 from app.db import session as db_session
 from app.models import Character, Job, Story
 from app.models.mixins import utcnow
-from app.schemas.ai import AnalyzeRequest, RenderRequest
+from app.schemas.ai import RenderRequest
 from app.schemas.common import JobStatus, Joint
 from app.services.ai_client import get_ai_client
 from app.services.storage import get_storage
@@ -49,11 +49,8 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
         storage = get_storage()
         try:
             ai = get_ai_client((character.image_width, character.image_height))
-            res = ai.analyze(
-                AnalyzeRequest(
-                    request_id=str(job.id), image_url=storage.url(character.upload_blob_path)
-                )
-            )
+            path = character.upload_blob_path
+            res = ai.analyze(storage.read(path), filename=path.rsplit("/", 1)[-1])
             character.bbox = res.bbox.model_dump()
             character.ai_joints = [j.model_dump(mode="json") for j in res.joints]
             character.model_version = res.model_version
