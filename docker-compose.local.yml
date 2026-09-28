@@ -1,0 +1,19 @@
+# Local development DB only. Backend runs with .venv + uvicorn --reload.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: drawtale
+      POSTGRES_PASSWORD: drawtale
+      POSTGRES_DB: drawtale
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - drawtale_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drawtale"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  drawtale_pg:
