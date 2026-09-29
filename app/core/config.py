@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     blob_container_results: str = "dev-results"
 
     openai_api_key: str = ""
+    openai_timeout_seconds: float = 30
     tts_api_key: str = ""
+    tts_timeout_seconds: float = 60
 
     # Social login (authorization code flow). Secrets live only here, never in the frontend.
     # A provider with an empty client id answers 503 PROVIDER_NOT_CONFIGURED.
