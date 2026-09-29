@@ -11,6 +11,7 @@ from app.schemas.ai import RenderRequest
 from app.schemas.common import JobStatus, Joint
 from app.services.ai_client import get_ai_client
 from app.services.storage import get_storage
+from app.services.story_writer import StoryBlocked, fallback_text, get_story_writer
 
 log = logging.getLogger(__name__)
 
@@ -91,11 +92,24 @@ def motion_for(action: str) -> str:
     return DEFAULT_MOTION
 
 
-def _mock_story_text(story: Story) -> str:
-    return (
-        f"오늘 나는 {story.place}에 갔어요. 그런데 {story.problem}. "
-        f"그래서 나는 {story.action}. 그랬더니 {story.result}."
-    )
+def write_story_text(story: Story) -> str:
+    """OpenAI로 이야기를 만든다. 키가 없거나 실패하면 템플릿 문장을 쓴다."""
+
+    parts = (story.place, story.problem, story.action, story.result)
+    writer = get_story_writer()
+
+    if writer is None:
+        log.info("OPENAI_API_KEY가 없어 템플릿 문장을 사용합니다")
+        return fallback_text(*parts)
+
+    try:
+        return writer.write(*parts)
+    except StoryBlocked:
+        raise
+    except Exception:
+        # 외부 API 문제로 서비스를 멈추지 않는다
+        log.exception("이야기 생성 실패, 템플릿 문장으로 대체합니다")
+        return fallback_text(*parts)
 
 
 def run_story_job(job_id: uuid.UUID) -> None:
@@ -109,8 +123,8 @@ def run_story_job(job_id: uuid.UUID) -> None:
 
         storage = get_storage()
         try:
-            # TODO: OpenAI story generation + moderation, TTS
-            story.text = _mock_story_text(story)
+            # TODO: TTS 연동
+            story.text = write_story_text(story)
             ai = get_ai_client((character.image_width, character.image_height))
 
             if character.ai_request_id:
@@ -133,6 +147,13 @@ def run_story_job(job_id: uuid.UUID) -> None:
 
             story.status = JobStatus.succeeded
             _succeed(job)
+        except StoryBlocked:
+            story.status = JobStatus.failed
+            _fail(
+                job,
+                "CONTENT_BLOCKED",
+                "이야기로 만들 수 없는 내용이 있어요. 다른 것을 골라 주세요.",
+            )
         except AppError as e:
             story.status = JobStatus.failed
             _fail(job, e.code, e.message)

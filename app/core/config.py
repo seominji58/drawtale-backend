@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     blob_container_results: str = "dev-results"
 
     openai_api_key: str = ""
+    openai_timeout_seconds: float = 30
     tts_api_key: str = ""
 
     cors_origins: str = "http://localhost:5173"

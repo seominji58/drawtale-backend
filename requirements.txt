@@ -8,3 +8,6 @@ alembic==1.20.0
 httpx==0.28.1
 python-multipart==0.0.32
 pillow==12.3.0
+
+# 이야기 생성 · Moderation
+openai==3.20.0
