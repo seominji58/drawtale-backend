@@ -95,6 +95,24 @@ ACTION_MOTIONS: dict[str, str] = {
 DEFAULT_MOTION = "wave_hello_gentle"
 
 
+def render_with_fallback(ai, req: RenderRequest):
+    """순화 동작으로 렌더한다. AI 서버가 그 동작을 아직 모르면 원래 동작으로 다시 요청한다.
+
+    순화 동작은 drawtale-ai `feat/gentle-motions` 에 있다. 그게 AI dev 에 합쳐지기 전에도
+    이야기 만들기가 `UNKNOWN_MOTION` 으로 실패하지 않게 한다.
+    """
+
+    try:
+        return ai.render(req)
+    except AppError as e:
+        gentle = req.motion.endswith("_gentle")
+        if not gentle or (e.detail or {}).get("ai_code") != "UNKNOWN_MOTION":
+            raise
+        base = req.motion.removesuffix("_gentle")
+        log.warning("AI does not know %s yet; rendering %s instead", req.motion, base)
+        return ai.render(req.model_copy(update={"motion": base}))
+
+
 def motion_for(action: str) -> str:
     """행동 문구에 맞는 동작을 고른다. 맞는 것이 없으면 기본 동작을 쓴다."""
 
@@ -157,12 +175,13 @@ def run_story_job(job_id: uuid.UUID) -> None:
             ai = get_ai_client((character.image_width, character.image_height))
 
             if character.ai_request_id:
-                result = ai.render(
+                result = render_with_fallback(
+                    ai,
                     RenderRequest(
                         request_id=character.ai_request_id,
                         joints=[Joint.model_validate(j) for j in current_joints(character)],
                         motion=motion_for(story.action),
-                    )
+                    ),
                 )
             else:
                 result = None
