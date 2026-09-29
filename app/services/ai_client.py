@@ -1,5 +1,6 @@
 """Client for the private AI service. Backend never imports AI code; it only speaks HTTP."""
 
+import json
 import logging
 import re
 import time
@@ -14,7 +15,7 @@ from app.schemas.ai import (
     AIAnalyzeRaw,
     AnalyzeResult,
     RenderRequest,
-    RenderResponse,
+    RenderResult,
 )
 from app.schemas.common import COORDINATE_SPACE, BBox, Joint, JointName, validate_full_skeleton
 
@@ -69,6 +70,7 @@ def normalize_analyze(raw: AIAnalyzeRaw) -> AnalyzeResult:
     return AnalyzeResult(
         bbox=BBox(x=b.left, y=b.top, width=b.right - b.left, height=b.bottom - b.top),
         joints=joints,
+        request_id=raw.request_id,
         model_version=raw.model_version or UNKNOWN,
         pipeline_version=raw.pipeline_version or UNKNOWN,
         coordinate_space=raw.coordinate_space or UNKNOWN,
@@ -84,7 +86,7 @@ class HttpAIClient:
             base_url=base_url.rstrip("/"), timeout=timeout, transport=transport
         )
 
-    def _post(self, path: str, **kwargs) -> dict:
+    def _post(self, path: str, **kwargs) -> httpx.Response:
         start = time.perf_counter()
         try:
             res = self.client.post(path, **kwargs)
@@ -99,22 +101,50 @@ class HttpAIClient:
             log.warning("AI %s HTTP %s: %s", path, res.status_code, res.text[:500])
             detail = {"ai_status": res.status_code}
             raise AppError("AI_ERROR", "AI 처리 중 오류가 발생했어요.", 502, detail)
+        return res
+
+    def _json(self, res: httpx.Response) -> dict:
         try:
             return res.json()
         except ValueError as e:
             raise AppError("AI_INVALID_RESPONSE", "AI 응답 형식이 올바르지 않아요.", 502) from e
 
     def analyze(self, image: bytes, filename: str) -> AnalyzeResult:
-        data = self._post("/internal/v1/analyze", files={"file": (filename, image)})
+        res = self._post("/internal/v1/analyze", files={"file": (filename, image)})
         try:
-            raw = AIAnalyzeRaw.model_validate(data)
+            raw = AIAnalyzeRaw.model_validate(self._json(res))
         except ValidationError as e:
             raise AppError("AI_INVALID_RESPONSE", "AI 응답 형식이 올바르지 않아요.", 502) from e
         return normalize_analyze(raw)
 
-    def render(self, req: RenderRequest) -> RenderResponse:
-        data = self._post("/internal/v1/render", json=req.model_dump())
-        return RenderResponse.model_validate(data)
+    def render(self, req: RenderRequest) -> RenderResult:
+        """성공하면 MP4 본문이, 실패하면 JSON 오류가 돌아온다."""
+
+        res = self._post(
+            "/internal/v1/render",
+            data={
+                "request_id": req.request_id,
+                "joints": json.dumps([j.model_dump(mode="json") for j in req.joints]),
+                "motion": req.motion,
+            },
+        )
+        if res.headers.get("content-type", "").startswith("application/json"):
+            raise _ai_error(self._json(res).get("message"))
+
+        return RenderResult(
+            content=res.content,
+            content_type=res.headers.get("content-type", "video/mp4"),
+            processing_time_ms=int(res.headers.get("X-Processing-Time-Ms", 0)),
+            model_version=res.headers.get("X-Model-Version", UNKNOWN),
+        )
+
+    def delete_session(self, request_id: str) -> None:
+        """AI 서버의 임시 파일을 정리한다. 실패해도 서비스에는 영향이 없다."""
+
+        try:
+            self.client.delete(f"/internal/v1/sessions/{request_id}")
+        except httpx.HTTPError:
+            log.warning("could not delete AI session %s", request_id)
 
 
 # T-pose as ratios inside the bbox: (x, y)
@@ -146,6 +176,9 @@ class MockAIClient:
     def __init__(self, image_size: tuple[int, int] | None = None) -> None:
         self.image_size = image_size
 
+    def delete_session(self, request_id: str) -> None:
+        return None
+
     def analyze(self, image: bytes, filename: str) -> AnalyzeResult:
         start = time.perf_counter()
         w, h = self.image_size or (512, 512)
@@ -161,21 +194,20 @@ class MockAIClient:
         return AnalyzeResult(
             bbox=bbox,
             joints=joints,
+            request_id="mock-session",
             model_version=self.model_version,
             pipeline_version=self.pipeline_version,
             coordinate_space=COORDINATE_SPACE,
             processing_time_ms=int((time.perf_counter() - start) * 1000),
         )
 
-    def render(self, req: RenderRequest) -> RenderResponse:
-        return RenderResponse(
-            format="png",
-            duration_ms=0,
-            output_uploaded=False,
-            model_version=self.model_version,
-            pipeline_version=self.pipeline_version,
-            coordinate_space=COORDINATE_SPACE,
+    def render(self, req: RenderRequest) -> RenderResult:
+        # 실제 MP4 대신 빈 내용을 돌려준다. 호출 흐름만 검증하는 용도다.
+        return RenderResult(
+            content=b"",
+            content_type="video/mp4",
             processing_time_ms=0,
+            model_version=self.model_version,
         )
 
 

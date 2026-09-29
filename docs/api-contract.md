@@ -316,42 +316,51 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 | `MODEL_UNAVAILABLE` | `AI_UNAVAILABLE` | AI 서버가 준비되지 않았어요. |
 | 그 외 / code 없음 | `AI_ERROR` | 그림 분석 중 오류가 발생했어요. |
 
-### 3-3. `POST /internal/v1/render` ⬜ AI 미구현 — ⚠ A1과 형식 합의 필요
+### 3-3. `POST /internal/v1/render` ✅ 구현 완료 (2026-09-29)
 
-> 핵심 조건: **analyze가 준 관절이 아니라, Backend가 보낸 관절(사용자 보정 반영)로 렌더링**해야 한다.
-> 결과 형식은 **MP4**로 한다. 아래는 초안이며, 파일 전달 방식(직접 전송 vs URL)에 맞춰 바뀔 수 있다.
+보정된 관절로 애니메이션 MP4를 만든다. **analyze가 준 `request_id`가 필요하다.**
+AI 서버가 analyze 때 원본 그림과 마스크를 보관해 두고, render에서 재사용한다.
 
-**요청**
+**요청** — `multipart/form-data`
+
+| 필드 | 값 |
+|---|---|
+| `request_id` | analyze 응답의 `request_id` |
+| `joints` | 관절 15개 JSON 배열 (사용자 보정 반영) |
+| `motion` | `wave_hello` · `jumping` · `jumping_jacks` · `dab` · `zombie` |
+
+**성공 응답 `200`** — MP4 파일 본문 (`Content-Type: video/mp4`)
+
+| 헤더 | 값 |
+|---|---|
+| `X-Processing-Time-Ms` | 렌더링 소요 시간 |
+| `X-Model-Version` | 모델 버전 |
+| `X-Pipeline-Version` | 파이프라인 버전 |
+
+**실패 응답 `200`** — analyze와 같은 JSON 형식
 
 ```json
-{
-  "request_id": "...",
-  "image_url": "https://<storage>/uploads/....png?<SAS>",
-  "mask_url": "https://<storage>/results/.../mask.png?<SAS>",
-  "joints": [ "... 현재 관절 15개 (사용자 보정 반영)" ],
-  "motion": "wave_hello",
-  "output_upload_url": "https://<storage>/results/.../animation.gif?<SAS>"
-}
+{ "success": false, "message": "SESSION_NOT_FOUND: request_id not found: ..." }
 ```
 
-**응답 `200`**
+| AI code | Backend 처리 |
+|---|---|
+| `SESSION_NOT_FOUND` | 분석 결과가 만료됨 (AI 서버 재시작 등) |
+| `UNKNOWN_MOTION` | 지원하지 않는 동작 |
+| `INVALID_JOINTS` | 관절 15개가 아니거나 형식 오류 |
+| `MASK_NOT_FOUND` | 마스크 파일 없음 |
+| `RENDER_FAILED`, `ENCODING_FAILED` | 렌더링/변환 실패 |
 
-```json
-{
-  "format": "gif",
-  "duration_ms": 3000,
-  "output_uploaded": true,
-  "model_version": "meta-animated-drawings-pretrained",
-  "pipeline_version": "0.1.0",
-  "coordinate_space": "image_px",
-  "processing_time_ms": 8400
-}
-```
+**동작 특성**
 
-> ⚠ `motion` 값 목록 (Meta 예시 motion 기준 후보: `wave_hello`, `jumping`, `jumping_jacks`, `dab`, `zombie`)과
-> 이야기의 `action` → `motion` 매핑 방식은 A1과 정해야 한다.
+- 소요 시간: 약 35~40초 (839프레임 기준)
+- 결과 크기: 약 0.6~1.7MB
+- 관절이 캐릭터 영역 밖이면 자동으로 영역 안으로 맞춘다
+- Backend는 받은 MP4를 저장하고 `animation_url`로 제공한다
 
----
+### 3-4. `DELETE /internal/v1/sessions/{request_id}`
+
+AI 서버에 남은 임시 파일(원본, 마스크)을 정리한다. 응답은 `{"success": true}`.
 
 ## 4. 합의 필요 항목 정리
 
@@ -361,8 +370,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 | 2 | 좌표 기준 | 원본 이미지 px, 왼쪽 위 원점 | A1, Frontend |
 | 3 | 이야기 4단계 값 형식 | 자유 문자열 50자 | Frontend |
 | 4 | polling 간격 | 1~2초 | Frontend |
-| 5 | 파일 전달 방식 | 당분간 파일 직접 전송, Blob 연결 시 재검토 | A1 |
-| 6 | motion 목록, action→motion 매핑 | Meta 예시 motion | A1 |
-| 7 | 애니메이션 형식 | MP4 (A1 PoC 기준) | A1, Frontend |
+| 5 | 파일 전달 방식 | ✅ 파일 직접 전송 + request_id 세션, Blob 연결 시 재검토 | 완료 |
+| 6 | motion 목록 | ✅ wave_hello, jumping, jumping_jacks, dab, zombie | 완료 |
+| 7 | 애니메이션 형식 | ✅ MP4 확정 | 완료 |
 | 8 | AI 에러 code 목록 | 3-2 표 (A1 코드 기준) | A1 |
 | 9 | 로그인/세션 | 없음 (비회원) | 전원 |

@@ -53,6 +53,7 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
             res = ai.analyze(storage.read(path), filename=path.rsplit("/", 1)[-1])
             character.bbox = res.bbox.model_dump()
             character.ai_joints = [j.model_dump(mode="json") for j in res.joints]
+            character.ai_request_id = res.request_id
             character.model_version = res.model_version
             character.pipeline_version = res.pipeline_version
             character.coordinate_space = res.coordinate_space
@@ -67,6 +68,27 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
             character.status = JobStatus.failed
             _fail(job, "INTERNAL_ERROR", "그림 분석 중 알 수 없는 오류가 발생했어요.")
         db.commit()
+
+
+# 이야기의 행동 단계를 애니메이션 동작으로 잇는다.
+# AI 서버가 제공하는 동작: wave_hello, jumping, jumping_jacks, dab, zombie
+ACTION_MOTIONS: dict[str, str] = {
+    "인사": "wave_hello",
+    "사과": "wave_hello",
+    "춤": "dab",
+    "점프": "jumping",
+    "운동": "jumping_jacks",
+}
+DEFAULT_MOTION = "wave_hello"
+
+
+def motion_for(action: str) -> str:
+    """행동 문구에 맞는 동작을 고른다. 맞는 것이 없으면 기본 동작을 쓴다."""
+
+    for keyword, motion in ACTION_MOTIONS.items():
+        if keyword in action:
+            return motion
+    return DEFAULT_MOTION
 
 
 def _mock_story_text(story: Story) -> str:
@@ -90,17 +112,25 @@ def run_story_job(job_id: uuid.UUID) -> None:
             # TODO: OpenAI story generation + moderation, TTS
             story.text = _mock_story_text(story)
             ai = get_ai_client((character.image_width, character.image_height))
-            ai.render(
-                RenderRequest(
-                    request_id=str(job.id),
-                    image_url=storage.url(character.upload_blob_path),
-                    mask_url=storage.url(character.mask_blob_path),
-                    joints=[Joint.model_validate(j) for j in current_joints(character)],
-                    motion="wave_hello",
+
+            if character.ai_request_id:
+                result = ai.render(
+                    RenderRequest(
+                        request_id=character.ai_request_id,
+                        joints=[Joint.model_validate(j) for j in current_joints(character)],
+                        motion=motion_for(story.action),
+                    )
                 )
-            )
-            # Mock render has no output file yet: show the original drawing.
-            story.animation_blob_path = character.upload_blob_path
+            else:
+                result = None
+
+            if result and result.content:
+                path = storage.save(f"results/{story.id}.mp4", result.content)
+                story.animation_blob_path = path
+            else:
+                # Mock AI, or analysis done before the AI kept a session: show the drawing.
+                story.animation_blob_path = character.upload_blob_path
+
             story.status = JobStatus.succeeded
             _succeed(job)
         except AppError as e:

@@ -48,6 +48,7 @@ class AIMaskRaw(BaseModel):
 
 class AIAnalyzeRaw(BaseModel):
     success: bool
+    request_id: str | None = None
     bbox: AIBoxRaw | None = None
     joints: list[AIJointRaw] = Field(default_factory=list)
     mask: AIMaskRaw | None = None
@@ -62,23 +63,24 @@ class AIAnalyzeRaw(BaseModel):
 class AnalyzeResult(AIMeta):
     bbox: BBox
     joints: list[Joint]
+    request_id: str | None = None
 
 
 # --- POST /internal/v1/render (not implemented on the AI side yet) --------------------------
 
 
 class RenderRequest(BaseModel):
-    request_id: str
-    image_url: str
-    mask_url: str | None
+    """AI 서버에 보내는 렌더링 요청. joints는 사용자 보정이 반영된 현재 관절이다."""
+
+    request_id: str = Field(description="analyze 응답의 request_id")
     joints: list[Joint]
-    motion: str = Field(examples=["wave_hello"])
-    output_upload_url: str | None = Field(
-        default=None, description="결과 애니메이션을 PUT으로 올릴 URL (Blob SAS)"
-    )
+    motion: str = Field(default="wave_hello", examples=["wave_hello"])
 
 
-class RenderResponse(AIMeta):
-    format: str = Field(examples=["mp4"])
-    duration_ms: int
-    output_uploaded: bool
+class RenderResult(BaseModel):
+    """AI 서버가 돌려준 MP4 내용과 메타데이터."""
+
+    content: bytes
+    content_type: str = "video/mp4"
+    processing_time_ms: int = 0
+    model_version: str = UNKNOWN

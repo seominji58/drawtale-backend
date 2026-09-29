@@ -19,6 +19,8 @@ class Character(IdMixin, TimestampMixin, Base):
     bbox: Mapped[dict | None] = mapped_column(JSON, default=None)
     ai_joints: Mapped[list | None] = mapped_column(JSON, default=None)
     mask_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
+    # AI 서버가 분석 결과(원본·마스크)를 보관하는 세션 id. 렌더링 요청에 필요하다.
+    ai_request_id: Mapped[str | None] = mapped_column(String(64), default=None)
     model_version: Mapped[str | None] = mapped_column(String(100), default=None)
     pipeline_version: Mapped[str | None] = mapped_column(String(50), default=None)
     coordinate_space: Mapped[str | None] = mapped_column(String(20), default=None)
