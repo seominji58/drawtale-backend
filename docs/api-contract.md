@@ -388,7 +388,7 @@ AI 서버가 analyze 때 원본 그림과 마스크를 보관해 두고, render�
 |---|---|
 | `request_id` | analyze 응답의 `request_id` |
 | `joints` | 관절 15개 JSON 배열 (사용자 보정 반영) |
-| `motion` | `wave_hello` · `jumping` · `jumping_jacks` · `dab` · `zombie` |
+| `motion` | `wave_hello` · `jumping` · `jumping_jacks` · `dab` · `zombie` · **`wave_hello_gentle` · `jumping_gentle`** (Backend 는 순화 동작만 쓴다, 아래) |
 
 **성공 응답 `200`** — MP4 파일 본문 (`Content-Type: video/mp4`)
 
@@ -412,6 +412,17 @@ AI 서버가 analyze 때 원본 그림과 마스크를 보관해 두고, render�
 | `MASK_NOT_FOUND` | 마스크 파일 없음 |
 | `RENDER_FAILED`, `ENCODING_FAILED` | 렌더링/변환 실패 |
 
+**행동 → 동작 (Backend `motion_for`)**
+
+| 행동 문구에 들어 있으면 | motion |
+|---|---|
+| 달려 · 뛰 · 점프 · 춤 · 운동 | `jumping_gentle` |
+| 그 밖 전부 (물어 · 도와 · 불렀 · 인사 · 사과 · 숨 · 기다 …) | `wave_hello_gentle` |
+
+순화 동작은 팔 회전을 줄이고 팔꿈치를 거의 편 판이다. 팔을 몸통에 붙여 그린 그림에서 팔이
+뭉개지지 않게 하려는 것이다 (drawtale-ai README 「순화 동작」). **drawtale-ai `feat/gentle-motions` 가
+먼저 합쳐져야 한다** — 없는 motion 이름을 보내면 AI 가 `UNKNOWN_MOTION` 을 돌려준다.
+
 **동작 특성**
 
 - 소요 시간: 약 35~40초 (839프레임 기준)
@@ -432,7 +443,7 @@ AI 서버에 남은 임시 파일(원본, 마스크)을 정리한다. 응답은 
 | 3 | 이야기 4단계 값 형식 | 자유 문자열 50자 | Frontend |
 | 4 | polling 간격 | 1~2초 | Frontend |
 | 5 | 파일 전달 방식 | ✅ 파일 직접 전송 + request_id 세션, Blob 연결 시 재검토 | 완료 |
-| 6 | motion 목록 | ✅ wave_hello, jumping, jumping_jacks, dab, zombie | 완료 |
+| 6 | motion 목록 | ✅ wave_hello, jumping, jumping_jacks, dab, zombie + 순화 동작 wave_hello_gentle, jumping_gentle (drawtale-ai `feat/gentle-motions`). Backend 는 순화 동작만 쓴다 | A1 |
 | 7 | 애니메이션 형식 | ✅ MP4 확정 | 완료 |
 | 8 | AI 에러 code 목록 | 3-2 표 (A1 코드 기준) | A1 |
 | 9 | 로그인/세션 | 소셜 로그인(카카오·구글) 추가, **선택 사항**. 비회원도 전부 사용 가능. 캐릭터·이야기를 계정에 묶는 것은 미정 | 전원 |
