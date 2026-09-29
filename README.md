@@ -61,6 +61,16 @@ docker compose --profile app up -d --build
 - Azure DB 연결이 안 되면 현재 IP가 방화벽에 없는 것이다. https://api.ipify.org 결과를 Backend 담당에게 전달한다.
 - Frontend `.env`: `VITE_API_BASE_URL=http://127.0.0.1:8000`
 
+## 이야기 음성 (TTS) 설정
+
+`TTS_PROVIDER` 로 고른다. 키가 없으면 음성 없이 이야기와 애니메이션만 나간다.
+
+- `openai` (기본): `OPENAI_API_KEY` (또는 `TTS_API_KEY`)
+- `elevenlabs`: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`(콘솔 Voices 에서 고른 목소리 id),
+  `ELEVENLABS_MODEL_ID`(기본 `eleven_multilingual_v2` — 한국어 품질. 빠르고 싸게는 `eleven_flash_v2_5`)
+
+두 업체 모두 같은 속도(0.9)로 읽는다. 키는 `.env` 에만 둔다.
+
 ## 소셜 로그인 설정
 
 카카오·구글 로그인은 `.env` 의 `*_CLIENT_ID` · `*_CLIENT_SECRET` 이 있어야 동작한다

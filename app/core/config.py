@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = 30
     tts_api_key: str = ""
     tts_timeout_seconds: float = 60
+    # 이야기 음성 업체: "openai" (기본) | "elevenlabs". 청취 비교 후 팀이 고른다
+    tts_provider: str = "openai"
+    elevenlabs_api_key: str = ""
+    # ElevenLabs 목소리 id (콘솔 Voices 에서 복사). 비어 있으면 음성 없이 진행한다
+    elevenlabs_voice_id: str = ""
+    # 한국어를 읽는 모델. 품질은 multilingual_v2, 속도·비용은 flash_v2_5
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
 
     # Social login (authorization code flow). Secrets live only here, never in the frontend.
     # A provider with an empty client id answers 503 PROVIDER_NOT_CONFIGURED.
