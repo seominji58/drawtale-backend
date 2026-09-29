@@ -25,13 +25,13 @@ _ERRORS = {
     "/{provider}",
     response_model=AuthResponse,
     responses=_ERRORS,
-    summary="소셜 로그인 (kakao · naver · google) — 인가 코드 교환",
+    summary="소셜 로그인 (kakao · google) — 인가 코드 교환",
 )
 def social_login(
     provider: str, body: SocialLoginRequest, db: Session = Depends(get_db)
 ) -> AuthResponse:
     p = get_provider(provider)
-    member_id = fetch_member_id(p, body.code, body.redirect_uri, body.state)
+    member_id = fetch_member_id(p, body.code, body.redirect_uri)
 
     account = db.scalar(
         select(SocialAccount).where(

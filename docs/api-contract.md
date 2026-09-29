@@ -257,12 +257,12 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 ### 2-7. `POST /api/v1/auth/{provider}` — 소셜 로그인
 
-`provider`: `kakao` · `naver` · `google`. 인가 코드 방식이다.
+`provider`: `kakao` · `google`. 인가 코드 방식이다.
 
 ```text
 Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
          ◀── {redirect_uri}?code=…&state=… ──
-         ── POST /api/v1/auth/{provider} {code, redirect_uri, state, agreed} ──▶ Backend
+         ── POST /api/v1/auth/{provider} {code, redirect_uri, agreed} ──▶ Backend
                                                 Backend ── code + client_secret ──▶ 제공자 토큰
                                                 Backend ── access_token ──▶ 제공자 회원 정보 (id 만)
          ◀── { token, account } ──
@@ -271,7 +271,7 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 - **동의 항목(scope)을 요청하지 않는다.** 저장하는 것은 제공자 + 제공자 회원번호뿐이다.
   이름·이메일·프로필 사진은 받지도 저장하지도 않는다 (구글은 `openid` 만)
 - 클라이언트 시크릿은 Backend 환경변수에만 있다. Frontend 에는 client id 만 있다
-- `state` 는 Frontend 가 만들고 검증한다. 네이버는 토큰 교환에도 필요해서 함께 보낸다
+- `state` 는 Frontend 가 만들고 검증한다 (Backend 로 보내지 않는다)
 
 **요청**
 
@@ -279,7 +279,6 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 {
   "code": "제공자가 돌려준 인가 코드",
   "redirect_uri": "http://localhost:5173/auth/kakao/callback",
-  "state": "…",
   "agreed": false
 }
 ```
@@ -436,4 +435,4 @@ AI 서버에 남은 임시 파일(원본, 마스크)을 정리한다. 응답은 
 | 6 | motion 목록 | ✅ wave_hello, jumping, jumping_jacks, dab, zombie | 완료 |
 | 7 | 애니메이션 형식 | ✅ MP4 확정 | 완료 |
 | 8 | AI 에러 code 목록 | 3-2 표 (A1 코드 기준) | A1 |
-| 9 | 로그인/세션 | 소셜 로그인(카카오·네이버·구글) 추가, **선택 사항**. 비회원도 전부 사용 가능. 캐릭터·이야기를 계정에 묶는 것은 미정 | 전원 |
+| 9 | 로그인/세션 | 소셜 로그인(카카오·구글) 추가, **선택 사항**. 비회원도 전부 사용 가능. 캐릭터·이야기를 계정에 묶는 것은 미정 | 전원 |

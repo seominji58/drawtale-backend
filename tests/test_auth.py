@@ -14,7 +14,6 @@ REDIRECT = "http://localhost:5173/auth/{}/callback"
 # What each provider's profile endpoint returns for the member id "12345"
 _PROFILE = {
     "kakao": {"id": 12345},
-    "naver": {"resultcode": "00", "message": "success", "response": {"id": "12345"}},
     "google": {"sub": "12345"},
 }
 
@@ -45,11 +44,10 @@ def providers(monkeypatch):
     return {"seen": seen, "state": state}
 
 
-def _login(client, provider, agreed=False, state="st"):
+def _login(client, provider, agreed=False):
     body = {
         "code": "c0de",
         "redirect_uri": REDIRECT.format(provider),
-        "state": state,
         "agreed": agreed,
     }
     return client.post(f"/api/v1/auth/{provider}", json=body)
@@ -67,9 +65,7 @@ def test_first_login_requires_terms(client, providers):
     assert _count(User) == 0
 
 
-@pytest.mark.parametrize(
-    "provider,label", [("kakao", "카카오"), ("naver", "네이버"), ("google", "Google")]
-)
+@pytest.mark.parametrize("provider,label", [("kakao", "카카오"), ("google", "Google")])
 def test_signup_then_login(client, providers, provider, label):
     res = _login(client, provider, agreed=True)
     assert res.status_code == 200, res.text
@@ -86,15 +82,12 @@ def test_signup_then_login(client, providers, provider, label):
 
 
 def test_token_request_carries_secret_and_redirect(client, providers):
-    _login(client, "naver", agreed=True, state="xyz")
+    _login(client, "kakao", agreed=True)
     token_req = providers["seen"][0]
     form = {k: v[0] for k, v in parse_qs(token_req.content.decode()).items()}
-    assert form["client_secret"] == "naver-secret"
-    assert form["redirect_uri"] == REDIRECT.format("naver")
-    assert form["state"] == "xyz"  # Naver needs it; the others do not get it
-    _login(client, "kakao", agreed=True)
-    kakao_form = parse_qs(providers["seen"][2].content.decode())
-    assert "state" not in kakao_form
+    assert form["client_secret"] == "kakao-secret"
+    assert form["redirect_uri"] == REDIRECT.format("kakao")
+    assert form["grant_type"] == "authorization_code"
 
 
 def test_only_the_hash_of_the_token_is_stored(client, providers):
@@ -106,11 +99,11 @@ def test_only_the_hash_of_the_token_is_stored(client, providers):
 
 @pytest.mark.parametrize(
     "status,body",
-    [(400, {"error": "invalid_grant"}), (200, {"error": "invalid_request"})],  # Naver style: 200
+    [(400, {"error": "invalid_grant"}), (200, {"error": "invalid_request"})],  # some answer 200
 )
 def test_provider_rejects_code(client, providers, status, body):
     providers["state"].update(token_status=status, token_body=body)
-    res = _login(client, "naver", agreed=True)
+    res = _login(client, "kakao", agreed=True)
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "OAUTH_FAILED"
     assert _count(User) == 0

@@ -11,9 +11,6 @@ class SocialLoginRequest(BaseModel):
         description="인가 요청 때 쓴 것과 같은 값",
         examples=["http://localhost:5173/auth/kakao/callback"],
     )
-    state: str | None = Field(
-        default=None, max_length=200, description="인가 요청의 state. 네이버는 토큰 교환에 필요하다"
-    )
     agreed: bool = Field(
         default=False,
         description="이용약관·개인정보 처리방침에 동의했는지. 처음 가입할 때 true 여야 한다",

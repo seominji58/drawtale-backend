@@ -30,8 +30,6 @@ class Settings(BaseSettings):
     # A provider with an empty client id answers 503 PROVIDER_NOT_CONFIGURED.
     kakao_client_id: str = ""
     kakao_client_secret: str = ""
-    naver_client_id: str = ""
-    naver_client_secret: str = ""
     google_client_id: str = ""
     google_client_secret: str = ""
     auth_token_days: int = 30

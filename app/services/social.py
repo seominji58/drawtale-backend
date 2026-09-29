@@ -25,8 +25,6 @@ class Provider:
     token_url: str
     profile_url: str
     member_id: Callable[[dict], object]
-    # Naver requires the `state` from the authorize request on the token request too
-    needs_state: bool = False
 
 
 PROVIDERS: dict[str, Provider] = {
@@ -36,14 +34,6 @@ PROVIDERS: dict[str, Provider] = {
         token_url="https://kauth.kakao.com/oauth/token",
         profile_url="https://kapi.kakao.com/v2/user/me",
         member_id=lambda d: d["id"],
-    ),
-    "naver": Provider(
-        name="naver",
-        label="네이버",
-        token_url="https://nid.naver.com/oauth2.0/token",
-        profile_url="https://openapi.naver.com/v1/nid/me",
-        member_id=lambda d: d["response"]["id"],
-        needs_state=True,
     ),
     "google": Provider(
         name="google",
@@ -83,7 +73,7 @@ def _failed(provider: Provider, why: str) -> AppError:
     return AppError("OAUTH_FAILED", message, 400)
 
 
-def fetch_member_id(provider: Provider, code: str, redirect_uri: str, state: str | None) -> str:
+def fetch_member_id(provider: Provider, code: str, redirect_uri: str) -> str:
     client_id, client_secret = _credentials(provider)
     form = {
         "grant_type": "authorization_code",
@@ -92,13 +82,11 @@ def fetch_member_id(provider: Provider, code: str, redirect_uri: str, state: str
         "code": code,
         "redirect_uri": redirect_uri,  # must equal the one used on the authorize request
     }
-    if provider.needs_state:
-        form["state"] = state or ""
 
     try:
         with httpx.Client(timeout=_TIMEOUT_SECONDS, transport=_TRANSPORT) as http:
             res = http.post(provider.token_url, data=form)
-            # Naver answers 200 with an `error` field instead of an HTTP error
+            # Some providers answer 200 with an `error` field instead of an HTTP error
             token = res.json() if res.status_code < 500 else {}
             access_token = token.get("access_token")
             if res.status_code >= 400 or not access_token:
