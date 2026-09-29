@@ -61,6 +61,17 @@ docker compose --profile app up -d --build
 - Azure DB 연결이 안 되면 현재 IP가 방화벽에 없는 것이다. https://api.ipify.org 결과를 Backend 담당에게 전달한다.
 - Frontend `.env`: `VITE_API_BASE_URL=http://127.0.0.1:8000`
 
+## 소셜 로그인 설정
+
+카카오·네이버·구글 로그인은 `.env` 의 `*_CLIENT_ID` · `*_CLIENT_SECRET` 이 있어야 동작한다
+(없으면 `503 PROVIDER_NOT_CONFIGURED`). 각 개발자 콘솔에서:
+
+- Redirect URI: `http://localhost:5173/auth/{kakao|naver|google}/callback` (배포 주소도 따로)
+- **동의 항목·scope 는 켜지 않는다** — 회원번호만 받는다 (구글은 `openid` 만)
+- 시크릿은 Backend `.env` 에만 둔다. Frontend 에는 client id 만
+
+API 는 [docs/api-contract.md](docs/api-contract.md) 2-7, 2-8.
+
 ## 자주 쓰는 명령
 
 ```bash

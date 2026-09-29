@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     tts_api_key: str = ""
 
+    # Social login (authorization code flow). Secrets live only here, never in the frontend.
+    # A provider with an empty client id answers 503 PROVIDER_NOT_CONFIGURED.
+    kakao_client_id: str = ""
+    kakao_client_secret: str = ""
+    naver_client_id: str = ""
+    naver_client_secret: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    auth_token_days: int = 30
+
     cors_origins: str = "http://localhost:5173"
 
     @property

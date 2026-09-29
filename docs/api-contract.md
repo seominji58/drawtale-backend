@@ -108,6 +108,12 @@ Meta AnimatedDrawings skeleton에서 `root`를 뺀 15개. **배열 순서도 아
 | `AI_UNAVAILABLE` | Job error | AI 서버 연결 불가 |
 | `AI_ERROR` 등 AI가 준 code | Job error | AI 처리 실패 (A1 정의 code 그대로 전달) |
 | `INTERNAL_ERROR` | Job error | 알 수 없는 서버 오류 |
+| `UNAUTHORIZED` | 401 | 로그인이 필요한 요청에 토큰이 없거나 만료됨 |
+| `UNKNOWN_PROVIDER` | 404 | 지원하지 않는 소셜 로그인 제공자 |
+| `SIGNUP_REQUIRED` | 409 | 처음 온 사용자가 약관 동의(`agreed: true`) 없이 소셜 로그인 |
+| `OAUTH_FAILED` | 400 | 인가 코드 교환 실패 (만료·재사용·redirect_uri 불일치 등) |
+| `PROVIDER_NOT_CONFIGURED` | 503 | 서버에 해당 제공자 키가 설정되지 않음 |
+| `PROVIDER_UNAVAILABLE` | 503 | 제공자 서버에 연결할 수 없음 |
 
 > `Job error`는 HTTP 응답이 아니라 `GET /api/v1/jobs/{id}`의 `error` 필드로 전달된다.
 
@@ -249,7 +255,63 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 > 현재 Mock 단계: `text`는 템플릿 문장, `audio_url`은 `null`, `animation_url`은 원본 그림 URL.
 > OpenAI/TTS/AI render 연동 후 실제 값으로 바뀐다. **응답 형식은 바뀌지 않는다.**
 
-### 2-7. `GET /health`
+### 2-7. `POST /api/v1/auth/{provider}` — 소셜 로그인
+
+`provider`: `kakao` · `naver` · `google`. 인가 코드 방식이다.
+
+```text
+Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
+         ◀── {redirect_uri}?code=…&state=… ──
+         ── POST /api/v1/auth/{provider} {code, redirect_uri, state, agreed} ──▶ Backend
+                                                Backend ── code + client_secret ──▶ 제공자 토큰
+                                                Backend ── access_token ──▶ 제공자 회원 정보 (id 만)
+         ◀── { token, account } ──
+```
+
+- **동의 항목(scope)을 요청하지 않는다.** 저장하는 것은 제공자 + 제공자 회원번호뿐이다.
+  이름·이메일·프로필 사진은 받지도 저장하지도 않는다 (구글은 `openid` 만)
+- 클라이언트 시크릿은 Backend 환경변수에만 있다. Frontend 에는 client id 만 있다
+- `state` 는 Frontend 가 만들고 검증한다. 네이버는 토큰 교환에도 필요해서 함께 보낸다
+
+**요청**
+
+```json
+{
+  "code": "제공자가 돌려준 인가 코드",
+  "redirect_uri": "http://localhost:5173/auth/kakao/callback",
+  "state": "…",
+  "agreed": false
+}
+```
+
+- `redirect_uri`: 인가 요청 때와 **같은 값**. 각 개발자 콘솔에 등록돼 있어야 한다
+- `agreed`: 이용약관·개인정보 처리방침에 동의하고 가입 화면에서 눌렀으면 `true`
+
+**응답 `200`**
+
+```json
+{ "token": "…", "account": "카카오 계정" }
+```
+
+- `token`: 이후 `Authorization: Bearer <token>`. 서버에는 SHA-256 해시만 저장. 기본 30일(`AUTH_TOKEN_DAYS`)
+- `account`: 화면에 보일 이름. 이름을 받지 않으므로 제공자 이름이다
+
+**처음 온 사용자**: `agreed: false` 이고 처음 보는 회원번호면 `409 SIGNUP_REQUIRED`.
+**제공자 동의 화면은 우리 약관 동의를 대신하지 않는다.** Frontend 는 가입 화면에서 동의를 받고
+`agreed: true` 로 다시 로그인한다. 이때 계정이 만들어진다.
+
+### 2-8. `GET /api/v1/auth/me` — 로그인 확인
+
+`Authorization: Bearer <token>` 필요. 없거나 만료면 `401 UNAUTHORIZED`.
+
+```json
+{ "user_id": "…", "providers": ["kakao"] }
+```
+
+> 지금은 다른 API 가 로그인을 요구하지 않는다 (비회원도 전부 쓸 수 있다).
+> 캐릭터·이야기를 계정에 묶을지는 합의 필요 (4절 9번).
+
+### 2-9. `GET /health`
 
 ```json
 { "status": "ok", "env": "local" }
@@ -374,4 +436,4 @@ AI 서버에 남은 임시 파일(원본, 마스크)을 정리한다. 응답은 
 | 6 | motion 목록 | ✅ wave_hello, jumping, jumping_jacks, dab, zombie | 완료 |
 | 7 | 애니메이션 형식 | ✅ MP4 확정 | 완료 |
 | 8 | AI 에러 code 목록 | 3-2 표 (A1 코드 기준) | A1 |
-| 9 | 로그인/세션 | 없음 (비회원) | 전원 |
+| 9 | 로그인/세션 | 소셜 로그인(카카오·네이버·구글) 추가, **선택 사항**. 비회원도 전부 사용 가능. 캐릭터·이야기를 계정에 묶는 것은 미정 | 전원 |
