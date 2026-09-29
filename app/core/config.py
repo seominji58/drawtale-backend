@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_timeout_seconds: float = 30
     tts_api_key: str = ""
+    tts_timeout_seconds: float = 60
 
     cors_origins: str = "http://localhost:5173"
 

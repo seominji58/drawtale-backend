@@ -12,6 +12,7 @@ from app.schemas.common import JobStatus, Joint
 from app.services.ai_client import get_ai_client
 from app.services.storage import get_storage
 from app.services.story_writer import StoryBlocked, fallback_text, get_story_writer
+from app.services.tts import get_tts
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +113,22 @@ def write_story_text(story: Story) -> str:
         return fallback_text(*parts)
 
 
+def make_audio(story: Story, storage) -> str | None:
+    """이야기를 음성으로 만들어 저장한다. 실패해도 이야기와 애니메이션은 그대로 제공한다."""
+
+    tts = get_tts()
+    if tts is None:
+        log.info("TTS 키가 없어 음성을 만들지 않습니다")
+        return None
+
+    try:
+        audio = tts.speak(story.text)
+        return storage.save(f"results/{story.id}.mp3", audio)
+    except Exception:
+        log.exception("음성 생성 실패, 음성 없이 진행합니다")
+        return None
+
+
 def run_story_job(job_id: uuid.UUID) -> None:
     with db_session.SessionLocal() as db:
         job = db.get(Job, job_id)
@@ -123,8 +140,9 @@ def run_story_job(job_id: uuid.UUID) -> None:
 
         storage = get_storage()
         try:
-            # TODO: TTS 연동
             story.text = write_story_text(story)
+            story.audio_blob_path = make_audio(story, storage)
+
             ai = get_ai_client((character.image_width, character.image_height))
 
             if character.ai_request_id:
