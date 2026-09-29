@@ -71,15 +71,26 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
 
 
 # 이야기의 행동 단계를 애니메이션 동작으로 잇는다.
-# AI 서버가 제공하는 동작: wave_hello, jumping, jumping_jacks, dab, zombie
+#
+# 순화 동작(*_gentle)만 쓴다 (drawtale-ai feat/gentle-motions). 아이 그림은 팔을 몸통에 붙여
+# 그리는 경우가 많아, 팔을 내리거나 팔꿈치를 접는 원본 동작에서는 팔이 몸통에 눌려 뭉개진다.
+# dab·jumping_jacks·zombie 는 팔을 크게 접거나 내려서 쓰지 않는다.
+#
+# 키워드는 Frontend 행동 선택지(물어봤어요·달려갔어요·숨었어요·도와줬어요·기다렸어요·
+# 크게 불렀어요)와 이전 예시 문구에서 왔다. 활발한 행동은 뛰기, 나머지는 손 흔들기.
 ACTION_MOTIONS: dict[str, str] = {
-    "인사": "wave_hello",
-    "사과": "wave_hello",
-    "춤": "dab",
-    "점프": "jumping",
-    "운동": "jumping_jacks",
+    "달려": "jumping_gentle",
+    "뛰": "jumping_gentle",
+    "점프": "jumping_gentle",
+    "춤": "jumping_gentle",
+    "운동": "jumping_gentle",
+    "물어": "wave_hello_gentle",
+    "도와": "wave_hello_gentle",
+    "불렀": "wave_hello_gentle",
+    "인사": "wave_hello_gentle",
+    "사과": "wave_hello_gentle",
 }
-DEFAULT_MOTION = "wave_hello"
+DEFAULT_MOTION = "wave_hello_gentle"
 
 
 def motion_for(action: str) -> str:

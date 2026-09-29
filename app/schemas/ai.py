@@ -74,7 +74,7 @@ class RenderRequest(BaseModel):
 
     request_id: str = Field(description="analyze 응답의 request_id")
     joints: list[Joint]
-    motion: str = Field(default="wave_hello", examples=["wave_hello"])
+    motion: str = Field(default="wave_hello_gentle", examples=["wave_hello_gentle"])
 
 
 class RenderResult(BaseModel):
