@@ -108,6 +108,7 @@ Meta AnimatedDrawings skeleton에서 `root`를 뺀 15개. **배열 순서도 아
 | `AI_UNAVAILABLE` | Job error | AI 서버 연결 불가 |
 | `AI_ERROR` 등 AI가 준 code | Job error | AI 처리 실패 (A1 정의 code 그대로 전달) |
 | `INTERNAL_ERROR` | Job error | 알 수 없는 서버 오류 |
+| `CONTENT_BLOCKED` | Job error | 이야기 입력이나 만든 문장이 OpenAI moderation 에 걸림. 이야기를 만들지 않는다 |
 | `UNAUTHORIZED` | 401 | 로그인이 필요한 요청에 토큰이 없거나 만료됨 |
 | `UNKNOWN_PROVIDER` | 404 | 지원하지 않는 소셜 로그인 제공자 |
 | `SIGNUP_REQUIRED` | 409 | 처음 온 사용자가 약관 동의(`agreed: true`) 없이 소셜 로그인 |
@@ -252,8 +253,16 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 }
 ```
 
-> 현재 Mock 단계: `text`는 템플릿 문장, `audio_url`은 `null`, `animation_url`은 원본 그림 URL.
-> OpenAI/TTS/AI render 연동 후 실제 값으로 바뀐다. **응답 형식은 바뀌지 않는다.**
+각 값이 어디서 오는지 (2026-09-29 dev 기준):
+
+| 필드 | 설정이 있을 때 | 없거나 실패할 때 |
+|---|---|---|
+| `text` | `OPENAI_API_KEY` 가 있으면 gpt-4o-mini 가 네 단계를 이어 쓴다. 앞뒤로 moderation 검사 | 템플릿 문장 「오늘 나는 …에 갔어요. 그런데 ….」 |
+| `audio_url` | `text` 를 읽은 mp3. `TTS_PROVIDER=openai`(gpt-4o-mini-tts) 또는 `elevenlabs` | `null`. 음성만 빠지고 이야기는 성공 |
+| `animation_url` | AI 서버가 렌더한 MP4 (3-3). 동작은 `action` 으로 고른다 (4번 표 6) | 목 AI 면 원본 그림 URL |
+
+> moderation 에 걸리면 이야기는 `failed`, Job `error.code` 는 `CONTENT_BLOCKED` 다 (1-4).
+> 설정에 따라 값이 달라질 뿐 **응답 형식은 바뀌지 않는다.**
 
 ### 2-7. `POST /api/v1/auth/{provider}` — 소셜 로그인
 
