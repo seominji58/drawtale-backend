@@ -43,6 +43,7 @@ macOS / Linux: `python3.11 -m venv .venv` → `source .venv/bin/activate`, `cp .
 - http://127.0.0.1:8000/health
 - http://127.0.0.1:8000/docs
 - API 계약서: [docs/api-contract.md](docs/api-contract.md)
+- **Frontend 담당자용 시작 가이드: [docs/프론트엔드-시작하기.md](docs/프론트엔드-시작하기.md)**
 
 ## Frontend 담당자용: Docker로 Backend 띄우기
 
