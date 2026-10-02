@@ -33,3 +33,18 @@ class StoryResponse(BaseModel):
     animation_url: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ActivityCreateRequest(BaseModel):
+    """S-10 순서 맞추기 한 번의 결과."""
+
+    attempts: int = Field(ge=1, le=100, description="「다 했어요」를 누른 횟수 (맞힌 마지막 포함)")
+    completed: bool = Field(description="맞히고 S-11 로 갔는지")
+    card_count: int = Field(ge=2, le=4, description="놓은 문장 카드 수")
+    level: int | None = Field(default=None, ge=1, le=3, description="지원 수준")
+
+
+class ActivityResponse(ActivityCreateRequest):
+    id: uuid.UUID
+    story_id: uuid.UUID
+    created_at: datetime

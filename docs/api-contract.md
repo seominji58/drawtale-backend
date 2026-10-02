@@ -347,6 +347,29 @@ S-13 「원본 그림 보관」이 꺼져 있으면 Frontend 가 **아이가 그
 - 남기는 것: 관절, 이야기 문장 · 음성 · MP4
 - 지운 뒤 같은 그림으로 이야기를 만들면 MP4 없이 만든다 (`animation_url: null`). Frontend 는 들고 있는 그림을 캔버스로 움직인다
 
+### 2-11. `POST /api/v1/stories/{story_id}/activity` — 순서 맞추기 기록 (S-10)
+
+S-10 을 한 번 할 때마다 하나를 보낸다. 맞혀서 S-11 로 가면 `completed: true`,
+맞히기 전에 나가면 `completed: false`. 「다 했어요」를 한 번도 안 눌렀으면 보내지 않는다.
+같은 이야기를 S-11 「다시 보기」로 또 하면 기록이 하나 더 생긴다.
+
+**요청**
+
+```json
+{ "attempts": 2, "completed": true, "card_count": 4, "level": 2 }
+```
+
+| 필드 | 뜻 | 범위 |
+|---|---|---|
+| `attempts` | 「다 했어요」를 누른 횟수. 맞힌 마지막 한 번도 센다 | 1~100 |
+| `completed` | 맞히고 S-11 로 갔는지 | |
+| `card_count` | 놓은 문장 카드 수 (Level 1 은 2장) | 2~4 |
+| `level` | 그때의 지원 수준 (선택) | 1~3 |
+
+**응답 `201`** — 요청 필드 + `id`, `story_id`, `created_at`. 없는 이야기는 `404 STORY_NOT_FOUND`.
+
+`GET /api/v1/stories/{story_id}/activity` 는 그 이야기의 기록을 오래된 것부터 배열로 준다 (어른 화면용, 아직 쓰는 화면 없음).
+
 ---
 
 ## 3. Internal API (Backend → AI, A1 담당)
