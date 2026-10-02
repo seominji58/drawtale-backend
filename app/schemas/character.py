@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.common import BBox, JobStatus, Joint, validate_full_skeleton
+from app.schemas.common import AIJoint, BBox, JobStatus, Joint, validate_full_skeleton
 
 
 class CharacterCreateResponse(BaseModel):
@@ -15,7 +15,11 @@ class CharacterCreateResponse(BaseModel):
 class Analysis(BaseModel):
     bbox: BBox
     mask_url: str | None
-    joints: list[Joint]
+    # AI 가 처음 짚은 관절. 관절마다 score 가 있다 (예전 분석이면 null)
+    joints: list[AIJoint]
+    confidence: float | None = Field(
+        default=None, description="캐릭터 검출 점수 (0~1). 예전 분석이면 null"
+    )
     model_version: str
     pipeline_version: str
     coordinate_space: str

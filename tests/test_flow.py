@@ -19,6 +19,10 @@ def test_full_flow(client, png_bytes):
     assert [j["name"] for j in character["joints"]] == [n.value for n in JOINT_ORDER]
     assert character["analysis"]["coordinate_space"] == "image_px"
     assert character["analysis"]["model_version"] == "mock-v1"
+    assert character["analysis"]["confidence"] == 0.95
+    assert all(j["score"] == 0.9 for j in character["analysis"]["joints"])
+    # 현재 관절에는 점수가 없다. 사용자 보정값과 같은 모양이다
+    assert "score" not in character["joints"][0]
     assert character["joints_corrected"] is False
 
     joints = character["joints"]

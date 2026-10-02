@@ -15,7 +15,7 @@ from app.schemas.character import (
     CharacterResponse,
     JointsUpdateRequest,
 )
-from app.schemas.common import BBox, ErrorResponse, JobStatus, JobType, Joint
+from app.schemas.common import AIJoint, BBox, ErrorResponse, JobStatus, JobType, Joint
 from app.services.jobs import current_joints, run_analyze_job
 from app.services.storage import get_storage
 
@@ -39,7 +39,8 @@ def to_response(character: Character) -> CharacterResponse:
         analysis = Analysis(
             bbox=BBox.model_validate(character.bbox),
             mask_url=storage.url(character.mask_blob_path),
-            joints=[Joint.model_validate(j) for j in character.ai_joints],
+            joints=[AIJoint.model_validate(j) for j in character.ai_joints],
+            confidence=character.detection_confidence,
             model_version=character.model_version,
             pipeline_version=character.pipeline_version,
             coordinate_space=character.coordinate_space,

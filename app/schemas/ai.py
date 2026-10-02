@@ -6,7 +6,7 @@ shape the rest of the Backend uses. Only `app/services/ai_client.py` knows about
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common import BBox, Joint
+from app.schemas.common import AIJoint, BBox, Joint
 
 UNKNOWN = "unknown"
 
@@ -39,6 +39,7 @@ class AIJointRaw(BaseModel):
     name: str
     x: float
     y: float
+    score: float | None = None
 
 
 class AIMaskRaw(BaseModel):
@@ -51,6 +52,8 @@ class AIAnalyzeRaw(BaseModel):
     request_id: str | None = None
     bbox: AIBoxRaw | None = None
     joints: list[AIJointRaw] = Field(default_factory=list)
+    # 캐릭터 검출 점수. 이 값을 보내지 않는 AI 서버도 있다
+    confidence: float | None = None
     mask: AIMaskRaw | None = None
     message: str | None = None
     # Required by the contract; optional here until the AI server sends them.
@@ -62,7 +65,8 @@ class AIAnalyzeRaw(BaseModel):
 
 class AnalyzeResult(AIMeta):
     bbox: BBox
-    joints: list[Joint]
+    joints: list[AIJoint]
+    confidence: float | None = None
     request_id: str | None = None
 
 

@@ -35,6 +35,14 @@ class Joint(BaseModel):
     y: float = Field(ge=0, description="원본 이미지 기준 y (px)")
 
 
+class AIJoint(Joint):
+    """AI 가 짚은 관절. 사용자 보정값에는 점수가 없다."""
+
+    score: float | None = Field(
+        default=None, ge=0, le=1, description="모델이 이 관절을 확신하는 정도 (0~1)"
+    )
+
+
 class BBox(BaseModel):
     x: float = Field(ge=0)
     y: float = Field(ge=0)

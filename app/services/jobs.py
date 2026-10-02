@@ -55,6 +55,7 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
             res = ai.analyze(storage.read(path), filename=path.rsplit("/", 1)[-1])
             character.bbox = res.bbox.model_dump()
             character.ai_joints = [j.model_dump(mode="json") for j in res.joints]
+            character.detection_confidence = res.confidence
             character.ai_request_id = res.request_id
             character.model_version = res.model_version
             character.pipeline_version = res.pipeline_version

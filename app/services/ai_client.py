@@ -17,7 +17,13 @@ from app.schemas.ai import (
     RenderRequest,
     RenderResult,
 )
-from app.schemas.common import COORDINATE_SPACE, BBox, Joint, JointName, validate_full_skeleton
+from app.schemas.common import (
+    COORDINATE_SPACE,
+    AIJoint,
+    BBox,
+    JointName,
+    validate_full_skeleton,
+)
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +40,15 @@ _AI_ERRORS: dict[str, tuple[str, str]] = {
     "INVALID_BBOX": (
         "NO_CHARACTER_DETECTED",
         "그림에서 캐릭터 위치를 찾지 못했어요. 캐릭터가 잘 보이게 다시 찍어 주세요.",
+    ),
+    # drawtale-ai feat/joint-confidence. 아이에게 다른 그림을 부탁하는 경우다
+    "MULTIPLE_CHARACTERS": (
+        "MULTIPLE_CHARACTERS",
+        "그림에 사람이 여러 명 있어요. 한 명만 그린 그림으로 다시 해 주세요.",
+    ),
+    "LOW_CONFIDENCE": (
+        "LOW_CONFIDENCE",
+        "그림에서 사람 모양을 알아보기 어려워요. 사람을 크게 그려서 다시 찍어 주세요.",
     ),
     "MODEL_UNAVAILABLE": (
         "AI_UNAVAILABLE",
@@ -53,6 +68,11 @@ def _ai_error(message: str | None) -> AppError:
     return AppError(code, user_message, 502, {"ai_code": ai_code})
 
 
+def _unit(score: float | None) -> float | None:
+    """모델 점수를 0~1 로 자른다. 점수가 없으면 None 그대로 둔다."""
+    return None if score is None else min(1.0, max(0.0, score))
+
+
 def normalize_analyze(raw: AIAnalyzeRaw) -> AnalyzeResult:
     """Convert the AI server's response into the Backend's contract shape."""
     if not raw.success:
@@ -61,7 +81,7 @@ def normalize_analyze(raw: AIAnalyzeRaw) -> AnalyzeResult:
         raise AppError("AI_INVALID_RESPONSE", "AI 응답 형식이 올바르지 않아요.", 502)
     try:
         joints = validate_full_skeleton(
-            [Joint(name=j.name, x=j.x, y=j.y) for j in raw.joints]
+            [AIJoint(name=j.name, x=j.x, y=j.y, score=_unit(j.score)) for j in raw.joints]
         )
     except (ValueError, ValidationError) as e:
         log.warning("AI returned an invalid skeleton: %s", e)
@@ -70,6 +90,7 @@ def normalize_analyze(raw: AIAnalyzeRaw) -> AnalyzeResult:
     return AnalyzeResult(
         bbox=BBox(x=b.left, y=b.top, width=b.right - b.left, height=b.bottom - b.top),
         joints=joints,
+        confidence=_unit(raw.confidence),
         request_id=raw.request_id,
         model_version=raw.model_version or UNKNOWN,
         pipeline_version=raw.pipeline_version or UNKNOWN,
@@ -184,16 +205,18 @@ class MockAIClient:
         w, h = self.image_size or (512, 512)
         bbox = BBox(x=w * 0.2, y=h * 0.1, width=w * 0.6, height=h * 0.8)
         joints = [
-            Joint(
+            AIJoint(
                 name=name,
                 x=round(bbox.x + rx * bbox.width, 1),
                 y=round(bbox.y + ry * bbox.height, 1),
+                score=0.9,
             )
             for name, (rx, ry) in _MOCK_POSE.items()
         ]
         return AnalyzeResult(
             bbox=bbox,
             joints=joints,
+            confidence=0.95,
             request_id="mock-session",
             model_version=self.model_version,
             pipeline_version=self.pipeline_version,

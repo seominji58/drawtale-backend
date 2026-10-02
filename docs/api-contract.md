@@ -107,6 +107,9 @@ Meta AnimatedDrawings skeleton에서 `root`를 뺀 15개. **배열 순서도 아
 | `AI_TIMEOUT` | Job error | AI 처리 시간 초과 |
 | `AI_UNAVAILABLE` | Job error | AI 서버 연결 불가 |
 | `AI_ERROR` 등 AI가 준 code | Job error | AI 처리 실패 (A1 정의 code 그대로 전달) |
+| `NO_CHARACTER_DETECTED` | Job error | 그림에서 캐릭터를 찾지 못함 (너무 흐린 사진 포함) |
+| `MULTIPLE_CHARACTERS` | Job error | 따로 떨어진 사람이 둘 이상 (3-2) |
+| `LOW_CONFIDENCE` | Job error | 사람 모양으로 보기 어려운 그림 — 낙서, 도형 (3-2) |
 | `INTERNAL_ERROR` | Job error | 알 수 없는 서버 오류 |
 | `CONTENT_BLOCKED` | Job error | 이야기 입력이나 만든 문장이 OpenAI moderation 에 걸림. 이야기를 만들지 않는다 |
 | `UNAUTHORIZED` | 401 | 로그인이 필요한 요청에 토큰이 없거나 만료됨 |
@@ -173,7 +176,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   "analysis": {
     "bbox": { "x": 80, "y": 60, "width": 240, "height": 480 },
     "mask_url": null,
-    "joints": [ { "name": "hip", "x": 200.0, "y": 324.0 }, "... 15개" ],
+    "joints": [ { "name": "hip", "x": 200.0, "y": 324.0, "score": 0.9 }, "... 15개" ],
+    "confidence": 0.95,
     "model_version": "mock-v1",
     "pipeline_version": "mock",
     "coordinate_space": "image_px",
@@ -186,8 +190,11 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 }
 ```
 
-- `analysis.joints`: **AI가 준 원래 관절** (변하지 않음)
-- `joints`: **현재 사용할 관절** — 사용자가 보정했으면 보정값, 아니면 AI 값
+- `analysis.joints`: **AI가 준 원래 관절** (변하지 않음). 관절마다 `score`
+- `analysis.joints[].score`: 모델이 그 관절을 확신하는 정도 (0~1). 2026-10-02 이전 분석이거나 AI 서버가 주지 않으면 `null`
+- `analysis.confidence`: 캐릭터 검출 점수 (0~1). 없으면 `null`. **낙서에도 높게 나오므로 사람인지 판단에는 관절 점수를 쓴다**
+- Frontend 는 `confidence < 0.6` 이거나 `score < 0.4` 인 관절이 하나라도 있으면 어른 확인(S-05 「어른에게 도움 받기」)을 권하고, S-06 에서 그 관절을 따로 표시한다
+- `joints`: **현재 사용할 관절** — 사용자가 보정했으면 보정값, 아니면 AI 값. `score` 는 없다
 - `joints_corrected`: 사용자가 한 번이라도 보정했는지
 - 분석 전(`pending`/`running`)에는 `analysis`, `joints`가 `null`
 
@@ -355,7 +362,8 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 {
   "success": true,
   "bbox": { "left": 80, "top": 60, "right": 320, "bottom": 540 },
-  "joints": [ { "name": "hip", "x": 200, "y": 324 }, "... 15개, 1-1 순서" ],
+  "joints": [ { "name": "hip", "x": 200, "y": 324, "score": 0.91 }, "... 15개, 1-1 순서" ],
+  "confidence": 0.998,
   "mask": { "width": 240, "height": 480 },
   "message": "Analysis complete",
   "model_version": "meta-animated-drawings-pretrained",
@@ -372,6 +380,7 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 | **좌표 기준** | ❌ 최대 1000px로 줄인 이미지 기준 | **원본 이미지 px로 변환** |
 | 마스크 | ❌ 크기만 반환, 이미지는 버림 | **마스크 이미지 저장** (render에서 사용) |
 | 메타데이터 4개 | ❌ 없음 (Backend가 `unknown`으로 채움) | `model_version`, `pipeline_version`, `coordinate_space`, `processing_time_ms` |
+| 관절 `score` · 검출 `confidence` | ✅ drawtale-ai `feat/joint-confidence` (2026-10-02). 없으면 Backend 가 `null` | - |
 
 **실패 응답 `200`**
 
@@ -382,9 +391,14 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 | AI code | Backend Job error code | 사용자 메시지 |
 |---|---|---|
 | `NO_CHARACTER_DETECTED`, `INVALID_BBOX` | `NO_CHARACTER_DETECTED` | 그림에서 사람 모양 캐릭터를 찾지 못했어요. |
+| `MULTIPLE_CHARACTERS` | `MULTIPLE_CHARACTERS` | 그림에 사람이 여러 명 있어요. 한 명만 그린 그림으로 다시 해 주세요. |
+| `LOW_CONFIDENCE` | `LOW_CONFIDENCE` | 그림에서 사람 모양을 알아보기 어려워요. 사람을 크게 그려서 다시 찍어 주세요. |
 | `INVALID_IMAGE` | `INVALID_IMAGE` | 이미지를 읽을 수 없어요. |
 | `MODEL_UNAVAILABLE` | `AI_UNAVAILABLE` | AI 서버가 준비되지 않았어요. |
 | 그 외 / code 없음 | `AI_ERROR` | 그림 분석 중 오류가 발생했어요. |
+
+걸러내는 기준(AI 쪽): `MULTIPLE_CHARACTERS` 는 두 번째 검출 점수 ≥ 0.8 이고 첫 상자와 50% 미만 겹칠 때,
+`LOW_CONFIDENCE` 는 검출 점수 < 0.3 이거나 관절 점수 평균 < 0.35 일 때. 실제 그림으로 잰 값은 drawtale-ai README 「점수와 걸러내기」.
 
 ### 3-3. `POST /internal/v1/render` ✅ 구현 완료 (2026-09-29)
 

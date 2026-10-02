@@ -35,6 +35,23 @@ def test_analyze_normalizes_a1_response():
     assert res.model_version == "unknown"
 
 
+def test_analyze_keeps_scores():
+    joints = [{**j, "score": 0.5} for j in _A1_OK["joints"]]
+    joints[2]["score"] = 1.02  # 히트맵 최댓값이 1을 살짝 넘기도 한다
+    body = {**_A1_OK, "joints": joints, "confidence": 0.81}
+    res = _client(lambda r: httpx.Response(200, json=body)).analyze(b"x", "draw.png")
+
+    assert res.confidence == 0.81
+    assert [j.score for j in res.joints][:3] == [0.5, 0.5, 1.0]
+
+
+def test_analyze_without_scores():
+    res = _client(lambda r: httpx.Response(200, json=_A1_OK)).analyze(b"x", "draw.png")
+
+    assert res.confidence is None
+    assert all(j.score is None for j in res.joints)
+
+
 def test_analyze_maps_ai_error_code():
     body = {"success": False, "message": "NO_CHARACTER_DETECTED: No drawn humanoid detected"}
     client = _client(lambda r: httpx.Response(200, json=body))
@@ -44,6 +61,18 @@ def test_analyze_maps_ai_error_code():
 
     assert e.value.code == "NO_CHARACTER_DETECTED"
     assert "캐릭터" in e.value.message
+
+
+@pytest.mark.parametrize("ai_code", ["MULTIPLE_CHARACTERS", "LOW_CONFIDENCE"])
+def test_analyze_maps_drawing_rejections(ai_code):
+    body = {"success": False, "message": f"{ai_code}: details"}
+    client = _client(lambda r: httpx.Response(200, json=body))
+
+    with pytest.raises(AppError) as e:
+        client.analyze(b"x", "draw.png")
+
+    assert e.value.code == ai_code
+    assert "다시" in e.value.message
 
 
 def test_analyze_hides_unknown_ai_error():
