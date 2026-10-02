@@ -10,6 +10,7 @@ from app.models.mixins import utcnow
 from app.schemas.ai import RenderRequest
 from app.schemas.common import JobStatus, Joint
 from app.services.ai_client import get_ai_client
+from app.services.originals import delete_original
 from app.services.storage import get_storage
 from app.services.story_writer import StoryBlocked, fallback_text, get_story_writer
 from app.services.tts import get_tts
@@ -70,6 +71,9 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
             log.exception("analyze job %s failed", job_id)
             character.status = JobStatus.failed
             _fail(job, "INTERNAL_ERROR", "그림 분석 중 알 수 없는 오류가 발생했어요.")
+        # 분석에 실패한 그림은 다시 쓰지 않는다. 보관하지 않으면 바로 지운다
+        if character.status == JobStatus.failed and not character.keep_original:
+            delete_original(db, character)
         db.commit()
 
 
@@ -190,9 +194,13 @@ def run_story_job(job_id: uuid.UUID) -> None:
             if result and result.content:
                 path = storage.save(f"results/{story.id}.mp4", result.content)
                 story.animation_blob_path = path
-            else:
+            elif character.original_deleted_at is None:
                 # Mock AI, or analysis done before the AI kept a session: show the drawing.
                 story.animation_blob_path = character.upload_blob_path
+            else:
+                # 원본을 지운 그림이다. 움직일 그림이 없으니 MP4 없이 둔다
+                # (프론트가 들고 있는 그림을 캔버스로 움직여 보여준다)
+                story.animation_blob_path = None
 
             story.status = JobStatus.succeeded
             _succeed(job)

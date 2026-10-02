@@ -29,12 +29,15 @@ class Analysis(BaseModel):
 class CharacterResponse(BaseModel):
     id: uuid.UUID
     status: JobStatus
-    image_url: str
+    # 원본을 지웠으면 null
+    image_url: str | None
     image_width: int
     image_height: int
     analysis: Analysis | None
     joints: list[Joint] | None
     joints_corrected: bool
+    keep_original: bool
+    original_deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

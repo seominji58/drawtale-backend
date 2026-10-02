@@ -131,6 +131,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 - Content-Type: `multipart/form-data`
 - 필드: `image` (PNG 또는 JPG, 최대 10MB)
+- 필드: `keep_original` (선택, 기본 `false`) — S-13 「원본 그림 보관」. `false` 면 원본을 2-10 으로 지우거나, 요청이 없어도 `ORIGINAL_RETENTION_HOURS`(기본 24시간) 뒤 서버가 지운다. 분석에 실패한 그림은 바로 지운다
 
 **응답 `202`**
 
@@ -185,6 +186,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   },
   "joints": [ { "name": "hip", "x": 200.0, "y": 324.0 }, "... 15개" ],
   "joints_corrected": false,
+  "keep_original": false,
+  "original_deleted_at": null,
   "created_at": "...",
   "updated_at": "..."
 }
@@ -196,6 +199,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 - Frontend 는 `confidence < 0.6` 이거나 `score < 0.4` 인 관절이 하나라도 있으면 어른 확인(S-05 「어른에게 도움 받기」)을 권하고, S-06 에서 그 관절을 따로 표시한다
 - `joints`: **현재 사용할 관절** — 사용자가 보정했으면 보정값, 아니면 AI 값. `score` 는 없다
 - `joints_corrected`: 사용자가 한 번이라도 보정했는지
+- `image_url`: 원본을 지웠으면 `null`. `original_deleted_at` 이 지운 때다
 - 분석 전(`pending`/`running`)에는 `analysis`, `joints`가 `null`
 
 ### 2-4. `PATCH /api/v1/characters/{character_id}/joints` — 관절 보정 저장
@@ -331,6 +335,17 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 ```json
 { "status": "ok", "env": "local" }
 ```
+
+### 2-10. `DELETE /api/v1/characters/{character_id}/original` — 원본 그림 지우기
+
+S-13 「원본 그림 보관」이 꺼져 있으면 Frontend 가 **아이가 그 그림을 떠날 때** 부른다
+(새 그림을 고름, 처음으로 돌아감, 탭을 닫음). 렌더에 원본이 필요하고 S-11 「새 이야기 만들기」가
+같은 그림을 다시 쓰므로 분석 직후에는 지우지 않는다.
+
+- 응답 `204`. 여러 번 불러도 된다. 없는 캐릭터는 `404 CHARACTER_NOT_FOUND`
+- 지우는 것: 업로드 파일, AI 세션(3-4 를 Backend 가 부른다)
+- 남기는 것: 관절, 이야기 문장 · 음성 · MP4
+- 지운 뒤 같은 그림으로 이야기를 만들면 MP4 없이 만든다 (`animation_url: null`). Frontend 는 들고 있는 그림을 캔버스로 움직인다
 
 ---
 

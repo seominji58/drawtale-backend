@@ -22,6 +22,11 @@ class LocalStorage:
     def read(self, path: str) -> bytes:
         return (self.root / path).read_bytes()
 
+    def delete(self, path: str | None) -> None:
+        """파일을 지운다. 이미 없으면 그냥 넘어간다."""
+        if path:
+            (self.root / path).unlink(missing_ok=True)
+
     def url(self, path: str | None) -> str | None:
         if not path:
             return None

@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -14,6 +15,12 @@ class Character(IdMixin, TimestampMixin, Base):
     upload_blob_path: Mapped[str] = mapped_column(String(500))
     image_width: Mapped[int] = mapped_column(Integer)
     image_height: Mapped[int] = mapped_column(Integer)
+    # 어른 설정 「원본 그림 보관」(S-13). 꺼져 있으면 그림을 떠날 때, 늦어도 보관 시간 뒤 지운다
+    keep_original: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 원본(업로드 파일과 AI 세션)을 지운 때. upload_blob_path 는 기록으로 남긴다
+    original_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
 
     # AI analyze result, as returned by the AI service
     bbox: Mapped[dict | None] = mapped_column(JSON, default=None)

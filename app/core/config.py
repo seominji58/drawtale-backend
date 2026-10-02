@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     storage_backend: str = "local"
     local_storage_dir: str = "./storage"
     max_upload_mb: int = 10
+    # 「원본 그림 보관」을 끈 그림은 프론트가 지우라고 하지 않아도 이 시간이 지나면 지운다
+    original_retention_hours: int = 24
 
     azure_storage_connection_string: str = ""
     blob_container_uploads: str = "dev-uploads"

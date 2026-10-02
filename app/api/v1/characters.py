@@ -1,7 +1,7 @@
 import io
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Response, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,7 @@ from app.schemas.character import (
 )
 from app.schemas.common import AIJoint, BBox, ErrorResponse, JobStatus, JobType, Joint
 from app.services.jobs import current_joints, run_analyze_job
+from app.services.originals import delete_original, purge_expired_originals
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/characters", tags=["characters"])
@@ -50,12 +51,16 @@ def to_response(character: Character) -> CharacterResponse:
     return CharacterResponse(
         id=character.id,
         status=character.status,
-        image_url=storage.url(character.upload_blob_path),
+        image_url=None
+        if character.original_deleted_at
+        else storage.url(character.upload_blob_path),
         image_width=character.image_width,
         image_height=character.image_height,
         analysis=analysis,
         joints=[Joint.model_validate(j) for j in joints] if joints else None,
         joints_corrected=bool(character.corrections),
+        keep_original=character.keep_original,
+        original_deleted_at=character.original_deleted_at,
         created_at=character.created_at,
         updated_at=character.updated_at,
     )
@@ -71,6 +76,10 @@ def to_response(character: Character) -> CharacterResponse:
 def create_character(
     background: BackgroundTasks,
     image: UploadFile = File(description="PNG 또는 JPEG, 최대 10MB"),
+    keep_original: bool = Form(
+        False,
+        description="S-13 「원본 그림 보관」. false 면 그림을 떠날 때, 늦어도 보관 시간 뒤 지운다",
+    ),
     db: Session = Depends(get_db),
 ) -> CharacterCreateResponse:
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
@@ -89,7 +98,11 @@ def create_character(
     character_id = uuid.uuid4()
     path = get_storage().save(f"uploads/{character_id}.{_ALLOWED_FORMATS[fmt]}", data)
     character = Character(
-        id=character_id, upload_blob_path=path, image_width=width, image_height=height
+        id=character_id,
+        upload_blob_path=path,
+        image_width=width,
+        image_height=height,
+        keep_original=keep_original,
     )
     job = Job(type=JobType.analyze, character_id=character_id)
     db.add(character)
@@ -98,6 +111,8 @@ def create_character(
     db.commit()
 
     background.add_task(run_analyze_job, job.id)
+    # 지우라는 요청이 오지 않은 지난 그림을 정리한다. 업로드 때마다 도는 가벼운 조회다
+    background.add_task(purge_expired_originals)
     return CharacterCreateResponse(character_id=character.id, job_id=job.id, status=job.status)
 
 
@@ -140,3 +155,21 @@ def update_joints(
     db.commit()
     db.refresh(character)
     return to_response(character)
+
+
+@router.delete(
+    "/{character_id}/original",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=_ERRORS,
+    summary="원본 그림 지우기 (S-13 「원본 그림 보관」이 꺼져 있을 때)",
+)
+def remove_original(character_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """업로드 파일과 AI 세션을 지운다. 관절과 이야기(문장 · 음성 · MP4)는 남는다.
+
+    이후 이 그림으로 이야기를 또 만들면 MP4 없이(`animation_url: null`) 만든다.
+    여러 번 불러도 된다.
+    """
+
+    delete_original(db, _get_character(db, character_id))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
