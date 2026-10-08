@@ -172,6 +172,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   "id": "68510684-d212-4710-a2fd-6dc76665c1d8",
   "status": "succeeded",
   "image_url": "http://127.0.0.1:8000/files/uploads/68510684-....png",
+  "preview_url": "http://127.0.0.1:8000/files/previews/68510684-...-1a2b3c4d.mp4",
+  "preview_status": "ready",
   "image_width": 400,
   "image_height": 600,
   "analysis": {
@@ -201,6 +203,11 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 - `joints_corrected`: 사용자가 한 번이라도 보정했는지
 - `image_url`: 원본을 지웠으면 `null`. `original_deleted_at` 이 지운 때다
 - 분석 전(`pending`/`running`)에는 `analysis`, `joints`가 `null`
+- `preview_url` · `preview_status` (2026-10-08): **S-05 미리보기 MP4** — 분석 Job 이 `succeeded` 가 된 **뒤에** Backend 가 AI 렌더(3-3,
+  `wave_hello_gentle`, `max_frames=150`)로 만든다. S-04 의 30초를 지키려고 분석 Job 은 기다리지 않는다.
+  `preview_status`: `rendering`(만드는 중 — Frontend 가 다시 묻는다) · `ready` · `failed` · `null`(만들지 않음: 목 AI, 원본 지움).
+  관절을 보정하면(2-4) `rendering` 으로 돌아가 새로 만들고 옛 파일은 지운다. 원본을 지우면(2-10) 같이 지운다.
+  이 노트북(Core Ultra 7) 기준 사람 그림 10초 · 종이 사진 20초 남짓
 
 ### 2-4. `PATCH /api/v1/characters/{character_id}/joints` — 관절 보정 저장
 
@@ -230,9 +237,24 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   "place": "학교",
   "problem": "친구와 다퉜어요",
   "action": "먼저 사과해요",
-  "result": "다시 사이좋게 놀아요"
+  "result": "다시 사이좋게 놀아요",
+  "voice_mode": "narration",
+  "protagonist_voice": "girl",
+  "protagonist_name": "하루"
 }
 ```
+
+`voice_mode` (선택, 기본 `narration`, 2026-10-08) — S-13 「읽어주기」.
+
+| 값 | `text` | `audio_url` |
+|---|---|---|
+| `narration` | 지금과 같다 | 나레이터(`ELEVENLABS_VOICE_ID`) 하나가 읽는다 |
+| `characters` | GPT 가 짧은 대사를 넣은 네 문장을 **3인칭**으로 쓴다. 주인공은 `protagonist_name`(아이가 지은 이름, 10자까지, 없으면 GPT 가 짓고 저장)으로 부른다. 대사는 `“ ”` 안. 예: `하루는 친구에게 “미안해.” 하고 말했어요.` 이름 뒤 조사는 받침에 맞춘다 | 나레이션은 나레이터, 대사는 인물 목소리 (ElevenLabs `text-to-dialogue`). 주인공 「나」는 `protagonist_voice`(`girl` · `boy`, 기본 `girl`), 다른 인물은 GPT 가 매긴 종류(아이 여/남, 어른 여/남, 할머니, 할아버지, 작은 동물, 큰 동물)로 `app/services/voices.py` 목록에서 겹치지 않게 고른다. 할머니 · 엄마처럼 이름이 곧 종류면 이름을 먼저 본다. 대사마다 감정(기쁨 · 다정 · 신남 · 놀람 · 슬픔 · 속삭임)을 v4 태그로 붙인다 |
+
+`characters` 라도 대본을 못 만들면(키 없음 · 형식 오류) 나레이션 판 글로, 대화 합성이 실패하면 나레이터 하나로 읽는다.
+정한 인물 → 목소리는 `stories.voice_cast` 에 남긴다 (응답에는 없다). TTS 가 `openai` 면 대사도 한 목소리다.
+네 문장이 아니거나 대사가 없으면 GPT 에게 세 번까지 다시 쓰게 한다.
+`eleven_v4` 는 speed 값을 무시한다 — 빠르기 · 감정은 문장 앞 태그(`[happy]` 등)로만 바뀐다 (2026-10-08 측정). 문장 수를 세는 기준은 따옴표 안의 마침표에서 끊지 않는다 (프론트 `sentences()` 와 같음).
 
 > ⚠ **Frontend와 합의 필요:** 지금은 각 단계 값을 **자유 문자열(최대 50자)**로 받는다.
 > 선택지를 서버가 내려줄지(`GET /api/v1/story-options`), 코드 값(`school`, `fight` 등)으로 주고받을지 정해야 한다.
@@ -256,6 +278,9 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   "problem": "친구와 다퉜어요",
   "action": "먼저 사과해요",
   "result": "다시 사이좋게 놀아요",
+  "voice_mode": "narration",
+  "protagonist_voice": "girl",
+  "protagonist_name": null,
   "text": "오늘 나는 학교에 갔어요. ...",
   "audio_url": null,
   "animation_url": "http://127.0.0.1:8000/files/uploads/....png",
@@ -450,6 +475,7 @@ AI 서버가 analyze 때 원본 그림과 마스크를 보관해 두고, render�
 | `request_id` | analyze 응답의 `request_id` |
 | `joints` | 관절 15개 JSON 배열 (사용자 보정 반영) |
 | `motion` | `wave_hello` · `jumping` · `jumping_jacks` · `dab` · `zombie` · **`wave_hello_gentle` · `jumping_gentle`** (Backend 는 순화 동작만 쓴다, 아래) |
+| `max_frames` | (선택, 2026-10-08) 프레임 상한. 동작 전체에서 일정 간격으로 골라 그린다 — 속도는 그대로, 끊김만 는다. AI `.env` 의 `RENDER_MAX_FRAMES` 와 둘 다 있으면 작은 쪽. Backend 는 S-05 미리보기에 150 을 보낸다 |
 
 **성공 응답 `200`** — MP4 파일 본문 (`Content-Type: video/mp4`)
 

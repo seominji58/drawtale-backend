@@ -3,17 +3,27 @@
 import logging
 import uuid
 
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db import session as db_session
 from app.models import Character, Job, Story
 from app.models.mixins import utcnow
 from app.schemas.ai import RenderRequest
 from app.schemas.common import JobStatus, Joint
+from app.schemas.story import VoiceMode
 from app.services.ai_client import get_ai_client
 from app.services.originals import delete_original
 from app.services.storage import get_storage
-from app.services.story_writer import StoryBlocked, fallback_text, get_story_writer
-from app.services.tts import get_tts
+from app.services.story_writer import (
+    Script,
+    StoryBlocked,
+    fallback_text,
+    get_story_writer,
+    has_dialogue,
+    script_text,
+)
+from app.services.tts import ElevenLabsSpeech, get_tts
+from app.services.voices import cast_voices
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +73,8 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
             character.coordinate_space = res.coordinate_space
             character.processing_time_ms = res.processing_time_ms
             character.status = JobStatus.succeeded
+            if wants_preview(character):
+                character.preview_status = "rendering"
             _succeed(job)
         except AppError as e:
             character.status = JobStatus.failed
@@ -75,6 +87,12 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
         if character.status == JobStatus.failed and not character.keep_original:
             delete_original(db, character)
         db.commit()
+
+        # 미리보기는 분석을 끝낸 뒤 만든다. S-04 는 30초 안에 넘어가야 해서 기다리게 하지 않는다 —
+        # S-05 가 preview_status 를 다시 물으며 기다린다
+        if character.preview_status == "rendering":
+            _store_preview(character, storage)
+            db.commit()
 
 
 # 이야기의 행동 단계를 애니메이션 동작으로 잇는다.
@@ -98,6 +116,65 @@ ACTION_MOTIONS: dict[str, str] = {
     "사과": "wave_hello_gentle",
 }
 DEFAULT_MOTION = "wave_hello_gentle"
+
+# S-05 미리보기. 브라우저 조각 애니메이션은 그림을 네모로 잘라 붙인 것처럼 보여서
+# (사용자, 2026-10-08) 분석 직후 Meta 로 짧게 렌더해 둔다. 동작 전체에서 150 프레임만 골라 그린다 —
+# 느린 노트북에서도 8초 안팎이라 S-04 의 30초 안에 들어간다
+PREVIEW_MAX_FRAMES = 150
+
+
+def make_preview(character: Character, storage) -> str | None:
+    """S-05 미리보기 MP4 를 저장하고 경로를 돌려준다.
+
+    실패해도 분석은 성공이다 — 프론트가 브라우저 애니메이션으로 대신한다.
+    파일 이름이 매번 달라서 관절을 고친 뒤 브라우저가 옛 영상을 보여주지 않는다.
+    """
+
+    if not character.ai_request_id:
+        return None
+    try:
+        ai = get_ai_client((character.image_width, character.image_height))
+        result = render_with_fallback(
+            ai,
+            RenderRequest(
+                request_id=character.ai_request_id,
+                joints=[Joint.model_validate(j) for j in current_joints(character)],
+                motion=DEFAULT_MOTION,
+                max_frames=PREVIEW_MAX_FRAMES,
+            ),
+        )
+    except Exception:
+        log.exception("미리보기 렌더 실패, 브라우저 애니메이션으로 대신합니다")
+        return None
+    if not result.content:  # 목 AI
+        return None
+    return storage.save(f"previews/{character.id}-{uuid.uuid4().hex[:8]}.mp4", result.content)
+
+
+def wants_preview(character: Character) -> bool:
+    """미리보기를 만들 수 있는 그림인지. 목 AI 는 MP4 를 만들지 않는다."""
+
+    return (
+        bool(character.ai_request_id)
+        and character.original_deleted_at is None
+        and not get_settings().ai_use_mock
+    )
+
+
+def _store_preview(character: Character, storage) -> None:
+    character.preview_blob_path = make_preview(character, storage)
+    character.preview_status = "ready" if character.preview_blob_path else "failed"
+
+
+def run_preview_job(character_id: uuid.UUID) -> None:
+    """관절을 고친 뒤 미리보기를 다시 만든다 (PATCH joints 가 부른다)."""
+
+    with db_session.SessionLocal() as db:
+        character = db.get(Character, character_id)
+        if character is None or character.preview_status != "rendering":
+            return
+        _store_preview(character, get_storage())
+        db.commit()
 
 
 def render_with_fallback(ai, req: RenderRequest):
@@ -147,8 +224,34 @@ def write_story_text(story: Story) -> str:
         return fallback_text(*parts)
 
 
-def make_audio(story: Story, storage) -> str | None:
-    """이야기를 음성으로 만들어 저장한다. 실패해도 이야기와 애니메이션은 그대로 제공한다."""
+def write_story_script(story: Story) -> Script | None:
+    """캐릭터 목소리 판의 대본. 만들 수 없으면 None — 나레이션 판으로 대신한다."""
+
+    writer = get_story_writer()
+    if writer is None:
+        return None
+
+    try:
+        script = writer.write_script(
+            story.place, story.problem, story.action, story.result, story.protagonist_name
+        )
+    except StoryBlocked:
+        raise
+    except Exception:
+        log.exception("대본 생성 실패, 나레이션 판으로 만듭니다")
+        return None
+    # 아이가 이름을 짓지 않았으면 GPT 가 지은 이름을 남긴다 (긴 동화책에서 같은 이름을 쓰려고)
+    story.protagonist_name = story.protagonist_name or script.protagonist or None
+    return script
+
+
+def make_audio(story: Story, storage, script: Script | None = None) -> str | None:
+    """이야기를 음성으로 만들어 저장한다. 실패해도 이야기와 애니메이션은 그대로 제공한다.
+
+    대본에 대사가 있고 ElevenLabs 를 쓰면 대사를 인물 목소리로 읽는다. 인물 → 목소리는
+    story.voice_cast 에 남긴다 (긴 동화책에서 쪽을 다시 만들어도 같은 목소리를 쓰려고).
+    그게 실패하면 나레이터 하나로 읽는다.
+    """
 
     tts = get_tts()
     if tts is None:
@@ -156,7 +259,19 @@ def make_audio(story: Story, storage) -> str | None:
         return None
 
     try:
-        audio = tts.speak(story.text)
+        audio = None
+        if script and has_dialogue(script) and isinstance(tts, ElevenLabsSpeech):
+            try:
+                lines = [line for parts in script.sentences for line in parts]
+                voices = cast_voices(
+                    script.cast, story.protagonist_voice, tts.voice_id, (ln.speaker for ln in lines)
+                )
+                audio = tts.dialogue(lines, voices)
+                story.voice_cast = voices
+            except Exception:
+                log.exception("캐릭터 목소리 실패, 나레이터 목소리로 읽습니다")
+        if audio is None:
+            audio = tts.speak(story.text)
         return storage.save(f"results/{story.id}.mp3", audio)
     except Exception:
         log.exception("음성 생성 실패, 음성 없이 진행합니다")
@@ -174,8 +289,9 @@ def run_story_job(job_id: uuid.UUID) -> None:
 
         storage = get_storage()
         try:
-            story.text = write_story_text(story)
-            story.audio_blob_path = make_audio(story, storage)
+            script = write_story_script(story) if story.voice_mode == VoiceMode.characters else None
+            story.text = script_text(script) if script else write_story_text(story)
+            story.audio_blob_path = make_audio(story, storage, script)
 
             ai = get_ai_client((character.image_width, character.image_height))
 

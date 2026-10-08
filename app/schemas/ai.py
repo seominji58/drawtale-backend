@@ -79,6 +79,8 @@ class RenderRequest(BaseModel):
     request_id: str = Field(description="analyze 응답의 request_id")
     joints: list[Joint]
     motion: str = Field(default="wave_hello_gentle", examples=["wave_hello_gentle"])
+    # 프레임 상한. 동작 전체에서 일정 간격으로 골라 그린다 (S-05 미리보기). None 이면 AI 기본
+    max_frames: int | None = None
 
 
 class RenderResult(BaseModel):

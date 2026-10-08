@@ -36,8 +36,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
     # ElevenLabs 목소리 id (콘솔 Voices 에서 복사). 비어 있으면 음성 없이 진행한다
     elevenlabs_voice_id: str = ""
-    # 한국어를 읽는 모델. 품질은 multilingual_v2, 속도·비용은 flash_v2_5
-    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    # 한국어를 읽는 모델. 청취 비교로 v4 를 골랐다 (2026-10-08, multilingual_v2 보다 자연스러움).
+    # 속도·비용을 줄이려면 flash_v2_5
+    elevenlabs_model_id: str = "eleven_v4"
+    # 캐릭터 목소리 판의 인물 목소리는 app/services/voices.py 목록에 있다
 
     # Social login (authorization code flow). Secrets live only here, never in the frontend.
     # A provider with an empty client id answers 503 PROVIDER_NOT_CONFIGURED.

@@ -10,6 +10,8 @@ import httpx
 from openai import OpenAI
 
 from app.core.config import get_settings
+from app.services.story_writer import Line
+from app.services.voices import NARRATOR, tagged
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +46,8 @@ class TextToSpeech:
 
 
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+# 캐릭터 목소리 판: 여러 목소리를 한 번에 읽는다 (v4 로 확인, 2026-10-08)
+ELEVENLABS_DIALOGUE_URL = "https://api.elevenlabs.io/v1/text-to-dialogue"
 # 테스트가 httpx.MockTransport 로 바꾼다
 _TRANSPORT: httpx.BaseTransport | None = None
 
@@ -51,7 +55,13 @@ _TRANSPORT: httpx.BaseTransport | None = None
 class ElevenLabsSpeech:
     """ElevenLabs 로 MP3 를 만든다. OpenAI 판과 같은 `speak(text) -> bytes` 모양이다."""
 
-    def __init__(self, api_key: str, voice_id: str, model_id: str, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        voice_id: str,
+        model_id: str,
+        timeout: float = 60.0,
+    ) -> None:
         self.api_key, self.voice_id, self.model_id, self.timeout = (
             api_key,
             voice_id,
@@ -74,6 +84,34 @@ class ElevenLabsSpeech:
                         "similarity_boost": 0.75,
                         "speed": TTS_SPEED,
                     },
+                },
+            )
+            res.raise_for_status()
+            return res.content
+
+    def dialogue(self, lines: list[Line], voices: dict[str, str]) -> bytes:
+        """나레이션은 나레이터, 대사는 인물 목소리로 MP3 하나를 만든다.
+
+        voices 는 말하는 사람 → 목소리 id (voices.cast_voices). 없는 사람은 나레이터가 읽는다.
+        대사 앞에는 감정 태그를 붙인다 — v4 는 태그를 소리 내 읽지 않는다.
+        """
+
+        with httpx.Client(timeout=self.timeout, transport=_TRANSPORT) as http:
+            res = http.post(
+                ELEVENLABS_DIALOGUE_URL,
+                params={"output_format": "mp3_44100_128"},
+                headers={"xi-api-key": self.api_key, "accept": "audio/mpeg"},
+                json={
+                    "model_id": self.model_id,
+                    "inputs": [
+                        {
+                            "text": line.text
+                            if line.speaker == NARRATOR
+                            else tagged(line.text, line.emotion),
+                            "voice_id": voices.get(line.speaker, self.voice_id),
+                        }
+                        for line in lines
+                    ],
                 },
             )
             res.raise_for_status()

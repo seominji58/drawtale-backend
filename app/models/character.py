@@ -34,6 +34,10 @@ class Character(IdMixin, TimestampMixin, Base):
     # 캐릭터 검출 점수 (0~1). 낮으면 프론트가 어른 확인을 권한다 (S-05-05)
     detection_confidence: Mapped[float | None] = mapped_column(Float, default=None)
     mask_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
+    # S-05 미리보기 MP4 (Meta 렌더, 분석 직후와 관절 보정 뒤). 원본을 지우면 같이 지운다
+    preview_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
+    # rendering | ready | failed. 미리보기를 만들지 않으면(목 AI, 원본 지움) 없다
+    preview_status: Mapped[str | None] = mapped_column(String(10), default=None)
     # AI 서버가 분석 결과(원본·마스크)를 보관하는 세션 id. 렌더링 요청에 필요하다.
     ai_request_id: Mapped[str | None] = mapped_column(String(64), default=None)
     model_version: Mapped[str | None] = mapped_column(String(100), default=None)

@@ -147,6 +147,7 @@ class HttpAIClient:
                 "request_id": req.request_id,
                 "joints": json.dumps([j.model_dump(mode="json") for j in req.joints]),
                 "motion": req.motion,
+                **({"max_frames": req.max_frames} if req.max_frames else {}),
             },
         )
         if res.headers.get("content-type", "").startswith("application/json"):

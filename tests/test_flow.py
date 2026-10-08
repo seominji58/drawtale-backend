@@ -46,6 +46,7 @@ def test_full_flow(client, png_bytes):
 
     story = client.get(f"/api/v1/stories/{res.json()['story_id']}").json()
     assert "학교" in story["text"]
+    assert story["voice_mode"] == "narration"  # 보내지 않으면 나레이션 판
     assert story["animation_url"].endswith(".png")
 
     file_path = story["animation_url"].replace("http://127.0.0.1:8000", "")
@@ -83,3 +84,43 @@ def test_not_found(client):
     res = client.get("/api/v1/characters/00000000-0000-0000-0000-000000000000")
     assert res.status_code == 404
     assert res.json()["error"]["code"] == "CHARACTER_NOT_FOUND"
+
+
+def test_characters_mode_without_openai_falls_back(client, png_bytes):
+    """캐릭터 목소리 판을 골라도 대본을 못 만들면 템플릿 문장으로 이야기를 만든다."""
+
+    character_id = _upload(client, png_bytes)["character_id"]
+    res = client.post(
+        "/api/v1/stories",
+        json={
+            "character_id": character_id,
+            "place": "공원",
+            "problem": "공을 잃어버렸어요",
+            "action": "친구와 같이 찾아요",
+            "result": "공을 찾았어요",
+            "voice_mode": "characters",
+            "protagonist_name": "콩이",
+        },
+    )
+    assert res.status_code == 202, res.text
+    story = client.get(f"/api/v1/stories/{res.json()['story_id']}").json()
+    assert story["status"] == "succeeded"
+    assert story["voice_mode"] == "characters"
+    assert story["protagonist_voice"] == "girl"  # 보내지 않으면 여자아이
+    assert story["protagonist_name"] == "콩이"
+    assert "공원" in story["text"]
+
+
+def test_unknown_voice_mode(client):
+    res = client.post(
+        "/api/v1/stories",
+        json={
+            "character_id": "00000000-0000-0000-0000-000000000000",
+            "place": "a",
+            "problem": "b",
+            "action": "c",
+            "result": "d",
+            "voice_mode": "radio",
+        },
+    )
+    assert res.status_code == 422

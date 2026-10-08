@@ -18,7 +18,7 @@ from app.schemas.character import (
     JointsUpdateRequest,
 )
 from app.schemas.common import AIJoint, BBox, ErrorResponse, JobStatus, JobType, Joint
-from app.services.jobs import current_joints, run_analyze_job
+from app.services.jobs import current_joints, run_analyze_job, run_preview_job, wants_preview
 from app.services.originals import delete_original, purge_expired_originals
 from app.services.storage import get_storage
 
@@ -52,6 +52,8 @@ def to_response(character: Character) -> CharacterResponse:
         image_url=None
         if character.original_deleted_at
         else storage.url(character.upload_blob_path),
+        preview_url=storage.url(character.preview_blob_path),
+        preview_status=character.preview_status,
         image_width=character.image_width,
         image_height=character.image_height,
         analysis=analysis,
@@ -147,6 +149,7 @@ def get_character(
 def update_joints(
     character_id: uuid.UUID,
     body: JointsUpdateRequest,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User | None = Depends(optional_user),
 ) -> CharacterResponse:
@@ -167,7 +170,14 @@ def update_joints(
             character_id=character.id, joints=[j.model_dump(mode="json") for j in body.joints]
         )
     )
+    # 미리보기는 고친 관절로 다시 만든다. 그동안 preview_status 는 rendering (프론트가 다시 묻는다)
+    old_preview = character.preview_blob_path
+    if wants_preview(character):
+        character.preview_blob_path, character.preview_status = None, "rendering"
+        background.add_task(run_preview_job, character.id)
     db.commit()
+    if old_preview != character.preview_blob_path:
+        get_storage().delete(old_preview)
     db.refresh(character)
     return to_response(character)
 

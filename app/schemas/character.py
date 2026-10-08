@@ -31,6 +31,10 @@ class CharacterResponse(BaseModel):
     status: JobStatus
     # 원본을 지웠으면 null
     image_url: str | None
+    # S-05 미리보기 MP4 (Meta 렌더). 준비되기 전 · 실패 · 목 AI 면 null
+    preview_url: str | None
+    # rendering(만드는 중, 다시 물어볼 것) | ready | failed. 만들지 않으면 null
+    preview_status: str | None
     image_width: int
     image_height: int
     analysis: Analysis | None
