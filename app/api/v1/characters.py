@@ -96,19 +96,27 @@ def create_character(
         raise AppError("INVALID_IMAGE", "PNG 또는 JPG 이미지만 올릴 수 있어요.")
 
     character_id = uuid.uuid4()
-    path = get_storage().save(f"uploads/{character_id}.{_ALLOWED_FORMATS[fmt]}", data)
-    character = Character(
-        id=character_id,
-        upload_blob_path=path,
-        image_width=width,
-        image_height=height,
-        keep_original=keep_original,
-    )
-    job = Job(type=JobType.analyze, character_id=character_id)
-    db.add(character)
-    db.flush()
-    db.add(job)
-    db.commit()
+    storage = get_storage()
+    path = storage.save(f"uploads/{character_id}.{_ALLOWED_FORMATS[fmt]}", data)
+
+    # 파일을 먼저 올리므로, DB 저장이 실패하면 주인 없는 파일이 남는다. 그때는 되돌린다
+    try:
+        character = Character(
+            id=character_id,
+            upload_blob_path=path,
+            image_width=width,
+            image_height=height,
+            keep_original=keep_original,
+        )
+        job = Job(type=JobType.analyze, character_id=character_id)
+        db.add(character)
+        db.flush()
+        db.add(job)
+        db.commit()
+    except Exception:
+        db.rollback()
+        storage.delete(path)
+        raise
 
     background.add_task(run_analyze_job, job.id)
     # 지우라는 요청이 오지 않은 지난 그림을 정리한다. 업로드 때마다 도는 가벼운 조회다

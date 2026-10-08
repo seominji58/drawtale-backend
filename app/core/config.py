@@ -21,9 +21,11 @@ class Settings(BaseSettings):
     # 「원본 그림 보관」을 끈 그림은 프론트가 지우라고 하지 않아도 이 시간이 지나면 지운다
     original_retention_hours: int = 24
 
+    # STORAGE_BACKEND=azure 일 때만 쓴다. 컨테이너는 환경마다 하나 (drawtale-dev · drawtale-prod)
     azure_storage_connection_string: str = ""
-    blob_container_uploads: str = "dev-uploads"
-    blob_container_results: str = "dev-results"
+    azure_blob_container: str = "drawtale-dev"
+    # 파일 주소(SAS)의 유효 시간. 응답마다 새로 발급하므로 짧아도 된다
+    azure_sas_hours: int = 2
 
     openai_api_key: str = ""
     openai_timeout_seconds: float = 30
