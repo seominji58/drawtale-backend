@@ -11,6 +11,11 @@ from app.models.mixins import IdMixin, TimestampMixin
 class Character(IdMixin, TimestampMixin, Base):
     __tablename__ = "characters"
 
+    # 올린 사람. 로그인하지 않고도 쓸 수 있으므로(F-ACC-01) 비어 있을 수 있다.
+    # 주인이 있는 그림은 그 사람만 보고 고칠 수 있다 (app/core/authz.py)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), default=None, index=True
+    )
     status: Mapped[str] = mapped_column(String(20), default="pending")
     upload_blob_path: Mapped[str] = mapped_column(String(500))
     image_width: Mapped[int] = mapped_column(Integer)

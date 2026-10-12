@@ -26,22 +26,42 @@ def issue_token(db: Session, user: User) -> str:
     return token
 
 
+def _user_for(authorization: str | None, db: Session) -> User | None:
+    """Authorization 헤더에서 사용자를 찾는다. 토큰이 없거나 틀리면 None."""
+
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    row = db.scalar(select(AuthToken).where(AuthToken.token_hash == hash_token(token)))
+    if row is None:
+        return None
+    # SQLite (tests) returns naive datetimes; compare in UTC either way
+    expires_at = row.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=utcnow().tzinfo)
+    if expires_at <= utcnow():
+        return None
+    return db.get(User, row.user_id)
+
+
 def current_user(
     authorization: str | None = Header(default=None), db: Session = Depends(get_db)
 ) -> User:
     """Dependency for endpoints that need a signed-in guardian or teacher."""
 
-    scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise AppError("UNAUTHORIZED", "로그인이 필요해요.", 401)
-    row = db.scalar(select(AuthToken).where(AuthToken.token_hash == hash_token(token)))
-    # SQLite (tests) returns naive datetimes; compare in UTC either way
-    expires_at = row.expires_at if row else None
-    if expires_at is not None and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=utcnow().tzinfo)
-    if row is None or expires_at <= utcnow():
-        raise AppError("UNAUTHORIZED", "로그인이 필요해요.", 401)
-    user = db.get(User, row.user_id)
+    user = _user_for(authorization, db)
     if user is None:
         raise AppError("UNAUTHORIZED", "로그인이 필요해요.", 401)
     return user
+
+
+def optional_user(
+    authorization: str | None = Header(default=None), db: Session = Depends(get_db)
+) -> User | None:
+    """로그인해도 되고 안 해도 되는 곳에 쓴다.
+
+    아이는 계정 없이도 끝까지 갈 수 있어야 한다 (F-ACC-01). 토큰이 있으면 그 계정의
+    것으로 기록하고, 없으면 주인 없는 자료로 둔다.
+    """
+
+    return _user_for(authorization, db)

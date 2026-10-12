@@ -4,9 +4,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import optional_user
+from app.core.authz import owned_character, owned_story
 from app.core.errors import AppError
 from app.db.session import get_db
-from app.models import Character, Job, Story, StoryActivity
+from app.models import Job, Story, StoryActivity, User
 from app.schemas.common import ErrorResponse, JobStatus, JobType
 from app.schemas.story import (
     ActivityCreateRequest,
@@ -23,13 +25,6 @@ router = APIRouter(prefix="/stories", tags=["stories"])
 _ERRORS = {404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}}
 
 
-def _get_story(db: Session, story_id: uuid.UUID) -> Story:
-    story = db.get(Story, story_id)
-    if story is None:
-        raise AppError("STORY_NOT_FOUND", "이야기를 찾을 수 없어요.", 404)
-    return story
-
-
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
@@ -38,11 +33,12 @@ def _get_story(db: Session, story_id: uuid.UUID) -> Story:
     summary="장소-문제-행동-결과 기반 이야기 생성 Job",
 )
 def create_story(
-    body: StoryCreateRequest, background: BackgroundTasks, db: Session = Depends(get_db)
+    body: StoryCreateRequest,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
 ) -> StoryCreateResponse:
-    character = db.get(Character, body.character_id)
-    if character is None:
-        raise AppError("CHARACTER_NOT_FOUND", "캐릭터를 찾을 수 없어요.", 404)
+    character = owned_character(db, body.character_id, user)
     if character.status != JobStatus.succeeded:
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 이야기를 만들 수 있어요.", 409)
 
@@ -63,8 +59,12 @@ def create_story(
     responses={404: {"model": ErrorResponse}},
     summary="이야기 조회 (텍스트, 음성, 애니메이션)",
 )
-def get_story(story_id: uuid.UUID, db: Session = Depends(get_db)) -> StoryResponse:
-    story = _get_story(db, story_id)
+def get_story(
+    story_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
+) -> StoryResponse:
+    story = owned_story(db, story_id, user)
     storage = get_storage()
     return StoryResponse(
         id=story.id,
@@ -90,9 +90,12 @@ def get_story(story_id: uuid.UUID, db: Session = Depends(get_db)) -> StoryRespon
     summary="S-10 순서 맞추기 기록 (시도 횟수, 완료 여부)",
 )
 def create_activity(
-    story_id: uuid.UUID, body: ActivityCreateRequest, db: Session = Depends(get_db)
+    story_id: uuid.UUID,
+    body: ActivityCreateRequest,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
 ) -> ActivityResponse:
-    story = _get_story(db, story_id)
+    story = owned_story(db, story_id, user)
     activity = StoryActivity(story_id=story.id, **body.model_dump())
     db.add(activity)
     db.commit()
@@ -105,8 +108,12 @@ def create_activity(
     responses={404: {"model": ErrorResponse}},
     summary="이 이야기의 순서 맞추기 기록 (오래된 것부터)",
 )
-def list_activity(story_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ActivityResponse]:
-    story = _get_story(db, story_id)
+def list_activity(
+    story_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
+) -> list[ActivityResponse]:
+    story = owned_story(db, story_id, user)
     rows = db.scalars(
         select(StoryActivity)
         .where(StoryActivity.story_id == story.id)

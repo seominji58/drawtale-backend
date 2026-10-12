@@ -5,10 +5,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Response, U
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
+from app.core.auth import optional_user
+from app.core.authz import owned_character
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.session import get_db
-from app.models import Character, Job, JointCorrection
+from app.models import Character, Job, JointCorrection, User
 from app.schemas.character import (
     Analysis,
     CharacterCreateResponse,
@@ -26,11 +28,7 @@ _ALLOWED_FORMATS = {"PNG": "png", "JPEG": "jpg"}
 _ERRORS = {400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
 
 
-def _get_character(db: Session, character_id: uuid.UUID) -> Character:
-    character = db.get(Character, character_id)
-    if character is None:
-        raise AppError("CHARACTER_NOT_FOUND", "캐릭터를 찾을 수 없어요.", 404)
-    return character
+
 
 
 def to_response(character: Character) -> CharacterResponse:
@@ -81,6 +79,7 @@ def create_character(
         description="S-13 「원본 그림 보관」. false 면 그림을 떠날 때, 늦어도 보관 시간 뒤 지운다",
     ),
     db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
 ) -> CharacterCreateResponse:
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
     data = image.file.read(max_bytes + 1)
@@ -103,6 +102,7 @@ def create_character(
     try:
         character = Character(
             id=character_id,
+            user_id=user.id if user else None,
             upload_blob_path=path,
             image_width=width,
             image_height=height,
@@ -130,8 +130,12 @@ def create_character(
     responses=_ERRORS,
     summary="캐릭터 조회 (분석 결과, 현재 관절)",
 )
-def get_character(character_id: uuid.UUID, db: Session = Depends(get_db)) -> CharacterResponse:
-    return to_response(_get_character(db, character_id))
+def get_character(
+    character_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
+) -> CharacterResponse:
+    return to_response(owned_character(db, character_id, user))
 
 
 @router.patch(
@@ -141,9 +145,12 @@ def get_character(character_id: uuid.UUID, db: Session = Depends(get_db)) -> Cha
     summary="사용자 관절 보정값 저장",
 )
 def update_joints(
-    character_id: uuid.UUID, body: JointsUpdateRequest, db: Session = Depends(get_db)
+    character_id: uuid.UUID,
+    body: JointsUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
 ) -> CharacterResponse:
-    character = _get_character(db, character_id)
+    character = owned_character(db, character_id, user)
     if character.status != JobStatus.succeeded:
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 관절을 수정할 수 있어요.", 409)
     out_of_image = [
@@ -171,13 +178,17 @@ def update_joints(
     responses=_ERRORS,
     summary="원본 그림 지우기 (S-13 「원본 그림 보관」이 꺼져 있을 때)",
 )
-def remove_original(character_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+def remove_original(
+    character_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
+) -> Response:
     """업로드 파일과 AI 세션을 지운다. 관절과 이야기(문장 · 음성 · MP4)는 남는다.
 
     이후 이 그림으로 이야기를 또 만들면 MP4 없이(`animation_url: null`) 만든다.
     여러 번 불러도 된다.
     """
 
-    delete_original(db, _get_character(db, character_id))
+    delete_original(db, owned_character(db, character_id, user))
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
