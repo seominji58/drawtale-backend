@@ -28,9 +28,6 @@ _ALLOWED_FORMATS = {"PNG": "png", "JPEG": "jpg"}
 _ERRORS = {400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
 
 
-
-
-
 def to_response(character: Character) -> CharacterResponse:
     storage = get_storage()
     analysis = None
@@ -157,9 +154,7 @@ def update_joints(
     if character.status != JobStatus.succeeded:
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 관절을 수정할 수 있어요.", 409)
     out_of_image = [
-        j.name
-        for j in body.joints
-        if j.x > character.image_width or j.y > character.image_height
+        j.name for j in body.joints if j.x > character.image_width or j.y > character.image_height
     ]
     if out_of_image:
         raise AppError(

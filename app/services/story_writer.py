@@ -13,6 +13,7 @@ from typing import NamedTuple
 from openai import OpenAI, OpenAIError
 
 from app.core.config import get_settings
+from app.services.book import Book, book_problems, book_prompt, book_user_message, parse_book
 from app.services.voices import EMOTION_TAGS, NARRATOR, PROTAGONIST, VOICE_TYPES
 
 log = logging.getLogger(__name__)
@@ -136,10 +137,7 @@ class StoryBlocked(Exception):
 def fallback_text(place: str, problem: str, action: str, result: str) -> str:
     """OpenAI를 쓸 수 없을 때 사용하는 템플릿 문장."""
 
-    return (
-        f"오늘 나는 {place}에 갔어요. 그런데 {problem}. "
-        f"그래서 나는 {action}. 그랬더니 {result}."
-    )
+    return f"오늘 나는 {place}에 갔어요. 그런데 {problem}. 그래서 나는 {action}. 그랬더니 {result}."
 
 
 def parse_script(raw: str, name: str | None = None) -> Script:
@@ -210,9 +208,7 @@ class StoryWriter:
         res = self.client.moderations.create(model=MODERATION_MODEL, input=text)
         if res.results[0].flagged:
             categories = [
-                name
-                for name, flagged in res.results[0].categories.model_dump().items()
-                if flagged
+                name for name, flagged in res.results[0].categories.model_dump().items() if flagged
             ]
             log.warning("입력이 moderation에 걸림: %s", categories)
             raise StoryBlocked(", ".join(categories))
@@ -281,6 +277,69 @@ class StoryWriter:
 
         self.check_input(script_text(script))
         return script
+
+    def write_book(
+        self,
+        choices: dict[str, str],
+        spoken: set[str],
+        pages: int,
+        characters: bool,
+        name: str | None = None,
+    ) -> Book:
+        """긴 이야기. 네 칸(과 아이가 말로 덧붙인 말)을 뼈대로 쪽 단위 대본을 만든다.
+
+        형식과 지시문은 services/book.py.
+
+        아이가 고른 내용이 그 단계 쪽에 없거나 쪽 수가 크게 어긋나면 세 번까지 다시 쓴다.
+        끝내 안 맞으면 마지막 것을 쓴다 — 형식만 맞으면 이야기는 나온다.
+        """
+
+        user_input = book_user_message(choices, spoken)
+        self.check_input(user_input)
+        if name:
+            self.check_input(name)
+
+        model = get_settings().story_book_model
+        params: dict = {"max_tokens": 2000, "temperature": 0.8}
+        if model.startswith(("gpt-5", "o3", "o4")):
+            # 추론 모델은 temperature 를 받지 않고 토큰 한도 이름이 다르다
+            params = {"max_completion_tokens": 8000}
+        # 아이 입력이 걸리면 위에서 막는다(StoryBlocked). AI 가 쓴 글이 걸리면 아이 탓이 아니므로
+        # 다시 쓰게 하고, 끝내 걸리면 OpenAIError — 부르는 쪽이 틀 문장 그림책으로 대신한다
+        # (「넘어졌어요」 이야기의 대본이 violence 로 걸린 적 있음, 2026-10-12)
+        best = None
+        for _ in range(3):
+            res = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": book_prompt(pages, characters, name)},
+                    {"role": "user", "content": user_input},
+                ],
+                response_format={"type": "json_object"},
+                **params,
+            )
+            try:
+                book = parse_book(res.choices[0].message.content or "", name)
+            except ValueError as e:
+                log.info("그림책 대본 형식이 틀려 다시 씁니다: %s", e)
+                continue
+            # 「내가 말한 부분」은 아이가 말로 덧붙인 단계에만. GPT 가 카드 글자를 적어 와도 지운다
+            for p in book.pages:
+                if p.stage not in spoken:
+                    p.child_words = ""
+            try:
+                self.check_input(book.text())
+            except StoryBlocked:
+                log.info("AI 가 쓴 그림책 대본이 moderation 에 걸려 다시 씁니다")
+                continue
+            best = book
+            problems = book_problems(book, choices, pages, characters)
+            if not problems:
+                break
+            log.info("그림책 대본을 다시 씁니다: %s", "; ".join(problems))
+        if best is None:
+            raise OpenAIError("쓸 수 있는 그림책 대본을 받지 못했다")
+        return best
 
 
 def get_story_writer() -> StoryWriter | None:

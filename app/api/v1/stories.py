@@ -77,6 +77,8 @@ def get_story(
         voice_mode=story.voice_mode,
         protagonist_voice=story.protagonist_voice,
         protagonist_name=story.protagonist_name,
+        length=story.length,
+        book=story.book,
         text=story.text,
         audio_url=storage.url(story.audio_blob_path),
         animation_url=storage.url(story.animation_blob_path),

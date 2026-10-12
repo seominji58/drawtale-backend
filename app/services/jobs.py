@@ -10,11 +10,13 @@ from app.models import Character, Job, Story
 from app.models.mixins import utcnow
 from app.schemas.ai import RenderRequest
 from app.schemas.common import JobStatus, Joint
-from app.schemas.story import VoiceMode
+from app.schemas.story import StoryLength, VoiceMode
 from app.services.ai_client import get_ai_client
+from app.services.book import STAGES, Book, fallback_book
 from app.services.originals import delete_original
 from app.services.storage import get_storage
 from app.services.story_writer import (
+    Line,
     Script,
     StoryBlocked,
     fallback_text,
@@ -245,6 +247,40 @@ def write_story_script(story: Story) -> Script | None:
     return script
 
 
+def write_story_book(story: Story) -> Book:
+    """긴 이야기 대본. 키가 없거나 실패하면 틀 문장 그림책을 쓴다 (부적절한 내용이면 막는다)."""
+
+    choices = {s: getattr(story, s) for s in STAGES}
+    pages = get_settings().story_pages
+    characters = story.voice_mode == VoiceMode.characters
+    writer = get_story_writer()
+    if writer is None:
+        log.info("OPENAI_API_KEY가 없어 틀 문장 그림책을 사용합니다")
+        return fallback_book(choices, pages, story.protagonist_name, set(story.spoken or []))
+    try:
+        book = writer.write_book(
+            choices, set(story.spoken or []), pages, characters, story.protagonist_name
+        )
+    except StoryBlocked:
+        raise
+    except Exception:
+        log.exception("그림책 대본 생성 실패, 틀 문장 그림책으로 대체합니다")
+        return fallback_book(choices, pages, story.protagonist_name, set(story.spoken or []))
+    # 아이가 이름을 짓지 않았으면 GPT 가 지은 이름을 남긴다 (캐릭터 목소리 판)
+    story.protagonist_name = story.protagonist_name or book.protagonist or None
+    return book
+
+
+def book_script(book: Book) -> Script:
+    """음성용. 쪽 하나를 대본의 한 덩어리로 본다 — make_audio 가 그대로 읽는다."""
+
+    return Script(
+        [[Line(s, t, e) for s, t, e in p.lines] for p in book.pages],
+        book.cast,
+        book.protagonist,
+    )
+
+
 def make_audio(story: Story, storage, script: Script | None = None) -> str | None:
     """이야기를 음성으로 만들어 저장한다. 실패해도 이야기와 애니메이션은 그대로 제공한다.
 
@@ -289,8 +325,18 @@ def run_story_job(job_id: uuid.UUID) -> None:
 
         storage = get_storage()
         try:
-            script = write_story_script(story) if story.voice_mode == VoiceMode.characters else None
-            story.text = script_text(script) if script else write_story_text(story)
+            if story.length == StoryLength.long:
+                # 긴 이야기: 쪽 단위 대본.
+                # 음성 · 영상은 아직 이야기 전체에 하나씩이다 (쪽마다는 다음 단계)
+                book = write_story_book(story)
+                story.book = book.to_json()
+                story.text = book.text()
+                script = book_script(book) if story.voice_mode == VoiceMode.characters else None
+            else:
+                script = (
+                    write_story_script(story) if story.voice_mode == VoiceMode.characters else None
+                )
+                story.text = script_text(script) if script else write_story_text(story)
             story.audio_blob_path = make_audio(story, storage, script)
 
             ai = get_ai_client((character.image_width, character.image_height))

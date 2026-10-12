@@ -240,9 +240,21 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   "result": "다시 사이좋게 놀아요",
   "voice_mode": "narration",
   "protagonist_voice": "girl",
-  "protagonist_name": "하루"
+  "protagonist_name": "하루",
+  "length": "long",
+  "spoken": ["problem"]
 }
 ```
+
+`length` (선택, 기본 `short`, 2026-10-12) — S-13 「이야기 길이」.
+
+| 값 | 무엇 |
+|---|---|
+| `short` | 지금까지와 같다. 네 칸 → 네 문장 (`book` 은 `null`) |
+| `long` | **네 칸을 뼈대로 쪽 단위 그림책.** 쪽 수는 서버 설정 `STORY_PAGES`(기본 8, 7~11). 장소 1~2 · 문제 2~3 · 행동 2~3 · 결과 2~3쪽으로 나누고, 쪽마다 어느 칸에서 나왔는지(`stage`)를 적는다. 아이가 고르지 않은 큰 사건(다른 장소 · 새 문제 · 새 악당 · 다른 결말)은 만들지 않고, 고른 일을 장면으로 펼쳐 보이기만 한다 (흉내말 · 마음 · 짧은 대사). 모델은 `STORY_BOOK_MODEL`(기본 `gpt-5.4-mini`). AI 가 쓴 대본이 moderation 에 걸리면 다시 쓰고, 끝내 걸리거나 키가 없거나 실패하면 틀 문장 그림책. 대본 규칙은 `app/services/book.py` |
+
+`spoken` (선택) — 카드 글자 대신 **아이가 말로 덧붙인 말**을 보낸 단계(`place` · `problem` · `action` · `result`).
+`long` 이면 대본이 그 말을 거의 그대로 살리고 그 쪽 `child_words` 에 적는다. 화면은 「내가 말한 부분」으로 보인다.
 
 `voice_mode` (선택, 기본 `narration`, 2026-10-08) — S-13 「읽어주기」.
 
@@ -281,6 +293,16 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   "voice_mode": "narration",
   "protagonist_voice": "girl",
   "protagonist_name": null,
+  "length": "long",
+  "book": {
+    "title": "숲에 간 날",
+    "pages": [
+      { "page": 1, "stage": "place", "action": "walk", "child_words": "",
+        "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.",
+        "lines": [{ "speaker": "나레이션", "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.", "emotion": "" }] }
+    ],
+    "order_pages": [1, 2, 4, 6]
+  },
   "text": "오늘 나는 학교에 갔어요. ...",
   "audio_url": null,
   "animation_url": "http://127.0.0.1:8000/files/uploads/....png",
@@ -296,6 +318,10 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 | `text` | `OPENAI_API_KEY` 가 있으면 gpt-4o-mini 가 네 단계를 이어 쓴다. 앞뒤로 moderation 검사 | 템플릿 문장 「오늘 나는 …에 갔어요. 그런데 ….」 |
 | `audio_url` | `text` 를 읽은 mp3. `TTS_PROVIDER=openai`(gpt-4o-mini-tts) 또는 `elevenlabs` | `null`. 음성만 빠지고 이야기는 성공 |
 | `animation_url` | AI 서버가 렌더한 MP4 (3-3). 동작은 `action` 으로 고른다 (4번 표 6) | 목 AI 면 원본 그림 URL |
+
+`book` (2026-10-12) — `length=long` 일 때만. `text` 는 쪽 글을 이어 붙인 것이다.
+쪽의 `action`(idle · walk · run · jump · wave · dance)은 쪽마다 캐릭터 동작용인데 **아직 렌더에 쓰지 않는다** —
+음성 · 영상은 지금 이야기 전체에 하나씩이다 (쪽마다는 다음 단계, 프론트 open-decisions 0-6). `order_pages` 는 S-10 순서 맞추기에 쓸 쪽.
 
 > moderation 에 걸리면 이야기는 `failed`, Job `error.code` 는 `CONTENT_BLOCKED` 다 (1-4).
 > 설정에 따라 값이 달라질 뿐 **응답 형식은 바뀌지 않는다.**

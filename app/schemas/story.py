@@ -21,6 +21,23 @@ class ProtagonistVoice(StrEnum):
     boy = "boy"
 
 
+class StoryLength(StrEnum):
+    """이야기 길이.
+
+    short: 네 칸 → 네 문장 · long: 네 칸을 뼈대로 쪽 단위 그림책 (services/book.py)
+    """
+
+    short = "short"
+    long = "long"
+
+
+class Stage(StrEnum):
+    place = "place"
+    problem = "problem"
+    action = "action"
+    result = "result"
+
+
 class StoryCreateRequest(BaseModel):
     character_id: uuid.UUID
     place: str = Field(min_length=1, max_length=50, examples=["학교"])
@@ -46,6 +63,47 @@ class StoryCreateRequest(BaseModel):
             "아이가 지은 주인공 이름. 캐릭터 목소리 판의 나레이션이 이 이름으로 3인칭으로 부른다"
         ),
     )
+    length: StoryLength = Field(
+        default=StoryLength.short,
+        description=(
+            "short: 네 문장 (지금까지) · long: 쪽 단위 그림책. 쪽 수는 서버 설정 STORY_PAGES"
+        ),
+    )
+    spoken: list[Stage] = Field(
+        default_factory=list,
+        description=(
+            "카드 글자 대신 아이가 말로 덧붙인 말을 보낸 단계. "
+            "long 이면 대본이 그 말을 그대로 살리고 "
+            "그 쪽에 child_words 로 표시한다"
+        ),
+    )
+
+
+class BookLine(BaseModel):
+    speaker: str
+    text: str
+    emotion: str = ""
+
+
+class BookPage(BaseModel):
+    page: int
+    stage: Stage
+    action: str = Field(
+        description="그 쪽에서 캐릭터가 하는 동작: idle · walk · run · jump · wave · dance"
+    )
+    text: str = Field(description="화면에 보일 글. 대사는 “ ” 로 감쌌다")
+    child_words: str = Field(
+        default="", description="이 쪽에 그대로 들어간 아이 말. 없으면 빈 문자열"
+    )
+    lines: list[BookLine]
+
+
+class Book(BaseModel):
+    title: str
+    pages: list[BookPage]
+    order_pages: list[int] = Field(
+        description="S-10 순서 맞추기에 쓸 쪽 번호. 장소 · 문제 · 행동 · 결과 순"
+    )
 
 
 class StoryCreateResponse(BaseModel):
@@ -65,6 +123,10 @@ class StoryResponse(BaseModel):
     voice_mode: VoiceMode
     protagonist_voice: ProtagonistVoice
     protagonist_name: str | None
+    length: StoryLength
+    book: Book | None = Field(
+        default=None, description="length=long 일 때만. text 는 쪽 글을 이어 붙인 것"
+    )
     text: str | None
     audio_url: str | None
     animation_url: str | None

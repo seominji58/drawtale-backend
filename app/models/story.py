@@ -27,6 +27,13 @@ class Story(IdMixin, TimestampMixin, Base):
     protagonist_name: Mapped[str | None] = mapped_column(String(20), default=None)
     # 캐릭터 목소리 판에서 정한 인물 이름 → ElevenLabs 목소리 id. 나레이션 판이면 없다
     voice_cast: Mapped[dict | None] = mapped_column(JSON, default=None)
+    # 이야기 길이: short(네 칸 → 네 문장) | long(쪽 단위 그림책, services/book.py)
+    length: Mapped[str] = mapped_column(String(10), default="short")
+    # 아이가 카드 대신 말로 덧붙인 단계 (place · problem · action · result).
+    # 대본이 그 말을 그대로 살린다
+    spoken: Mapped[list | None] = mapped_column(JSON, default=None)
+    # 긴 이야기 대본 — 제목, 쪽마다 단계 · 동작 · 글 · 아이 말, 순서 맞추기 쪽 (Book.to_json)
+    book: Mapped[dict | None] = mapped_column(JSON, default=None)
     text: Mapped[str | None] = mapped_column(Text, default=None)
     audio_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
     animation_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)

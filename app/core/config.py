@@ -29,6 +29,13 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_timeout_seconds: float = 30
+    # 긴 이야기(length=long)의 쪽 수. 7~11 로 맞춘다 (services/book.py).
+    # 쪽 수는 아직 정하지 않았다 (2026-10-12)
+    story_pages: int = 8
+    # 긴 이야기 대본을 쓰는 모델. 네 문장 판은 story_writer.STORY_MODEL(gpt-4o-mini) 그대로.
+    # gpt-4o-mini 는 카드 뜻을 뒤집고(도와줬어요 → 도움을 요청) 쪽 배치를 어겨서 바꿨다
+    # (2026-10-12 4편 비교)
+    story_book_model: str = "gpt-5.4-mini"
     tts_api_key: str = ""
     tts_timeout_seconds: float = 60
     # 이야기 음성 업체: "openai" (기본) | "elevenlabs". 청취 비교 후 팀이 고른다
