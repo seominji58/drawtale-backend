@@ -1,6 +1,6 @@
 """OpenAI로 이야기를 만들고 부적절한 내용을 걸러낸다.
 
-대상이 발달장애 아동이므로 문장을 짧고 쉽게 만드는 것이 가장 중요하다.
+글을 막 배우는 아이가 읽고 들을 글이라 문장을 짧고 쉽게 만드는 것이 가장 중요하다.
 API 키가 없거나 호출이 실패하면 템플릿 문장으로 대체해 서비스가 멈추지 않게 한다.
 """
 
@@ -18,7 +18,7 @@ from app.services.voices import EMOTION_TAGS, NARRATOR, PROTAGONIST, VOICE_TYPES
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """너는 발달장애 아동을 위한 이야기를 쓰는 작가야.
+SYSTEM_PROMPT = """너는 글을 막 배우기 시작한 아이를 위한 이야기를 쓰는 작가야.
 
 아이가 고른 네 단계(장소, 문제, 행동, 결과)로 짧은 이야기를 만들어.
 
