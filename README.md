@@ -29,8 +29,9 @@ pip install -r requirements-dev.txt
 # 2. 환경변수
 copy .env.example .env
 
-# 3. 로컬 DB (Docker Desktop 필요)
-docker compose -f docker-compose.local.yml up -d db
+# 3. DB 준비 (둘 중 하나)
+#   a) Azure 공유 DB: .env의 DATABASE_URL을 전달받은 drawtale_dev 주소로 변경
+#   b) 로컬 DB: docker compose up -d db   (Docker Desktop 필요, 포트 5433)
 alembic upgrade head
 
 # 4. 서버 실행
@@ -41,6 +42,48 @@ macOS / Linux: `python3.11 -m venv .venv` → `source .venv/bin/activate`, `cp .
 
 - http://127.0.0.1:8000/health
 - http://127.0.0.1:8000/docs
+- API 계약서: [docs/api-contract.md](docs/api-contract.md)
+- **Frontend 담당자용 시작 가이드: [docs/프론트엔드-시작하기.md](docs/프론트엔드-시작하기.md)**
+- 진행 상황 (한 일 · 남은 일): [docs/진행상황.md](docs/진행상황.md)
+
+## Frontend 담당자용: Docker로 Backend 띄우기
+
+Python 설치 없이 Docker Desktop만 있으면 된다. AI는 Mock으로 동작한다.
+
+```bash
+git pull
+cp .env.example .env          # DATABASE_URL을 전달받은 Azure drawtale_dev 주소로 변경
+docker compose --profile app up -d --build
+# → http://127.0.0.1:8000/docs
+```
+
+- 코드가 바뀌면 `git pull` 후 같은 명령을 다시 실행한다. (시작할 때 migration이 자동 적용된다)
+- 로그: `docker compose logs -f backend` · 종료: `docker compose --profile app down`
+- Azure DB 연결이 안 되면 현재 IP가 방화벽에 없는 것이다. https://api.ipify.org 결과를 Backend 담당에게 전달한다.
+- Frontend `.env`: `VITE_API_BASE_URL=http://127.0.0.1:8000`
+
+## 이야기 음성 (TTS) 설정
+
+`TTS_PROVIDER` 로 고른다. 키가 없으면 음성 없이 이야기와 애니메이션만 나간다.
+
+- `openai` (기본): `OPENAI_API_KEY` (또는 `TTS_API_KEY`)
+- `elevenlabs`: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`(콘솔 Voices 에서 고른 목소리 id),
+  `ELEVENLABS_MODEL_ID`(기본 `eleven_v4` — 10/8 청취 비교로 고름. 빠르고 싸게는 `eleven_flash_v2_5`)
+  캐릭터 목소리 판(`voice_mode: characters`, 계약 2-5)의 인물 목소리는 `app/services/voices.py` 에 종류별로 있다
+  (아이 여/남, 어른 여/남, 할머니, 할아버지, 작은 동물, 큰 동물). 할머니 목소리는 팀 계정에 저장한 것이라 다른 계정 키로는 안 된다
+
+두 업체 모두 같은 속도(0.9)로 읽는다. 키는 `.env` 에만 둔다.
+
+## 소셜 로그인 설정
+
+카카오·구글 로그인은 `.env` 의 `*_CLIENT_ID` · `*_CLIENT_SECRET` 이 있어야 동작한다
+(없으면 `503 PROVIDER_NOT_CONFIGURED`). 각 개발자 콘솔에서:
+
+- Redirect URI: `http://localhost:5173/auth/{kakao|google}/callback` (배포 주소도 따로)
+- **동의 항목·scope 는 켜지 않는다** — 회원번호만 받는다 (구글은 `openid` 만)
+- 시크릿은 Backend `.env` 에만 둔다. Frontend 에는 client id 만
+
+API 는 [docs/api-contract.md](docs/api-contract.md) 2-7, 2-8.
 
 ## 자주 쓰는 명령
 
