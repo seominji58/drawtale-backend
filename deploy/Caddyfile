@@ -1,0 +1,21 @@
+# 도메인을 정하면 example.com 을 바꾼다. 그러면 HTTPS 인증서를 자동으로 받는다.
+# 도메인이 없으면 아래 한 줄을 :80 으로 두고 쓴다 (인증서 없음, 시연용만)
+api.example.com {
+	reverse_proxy backend:8000
+
+	# 올리는 그림이 10MB 까지라 여유를 둔다 (MAX_UPLOAD_MB)
+	request_body {
+		max_size 20MB
+	}
+
+	# 렌더가 35~40초 걸린다. 기본 타임아웃으로는 끊긴다
+	timeouts {
+		read_body 2m
+		write 2m
+	}
+
+	encode gzip
+	log {
+		output stdout
+	}
+}

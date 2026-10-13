@@ -1,0 +1,74 @@
+# 배포용 — Azure VM 한 대에서 네 컨테이너를 띄운다.
+#
+#   전제: VM 에 두 저장소를 나란히 받아 둔다 (로컬과 같은 구조)
+#     ~/drawtale/drawtale-backend
+#     ~/drawtale/drawtale-ai
+#
+#   실행: cd ~/drawtale/drawtale-backend/deploy
+#         docker compose -f docker-compose.prod.yml up -d --build
+#
+# 로컬 개발용은 저장소 뿌리의 docker-compose.yml 이다. 이 파일과 섞지 않는다.
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    # 바깥에 열리는 유일한 컨테이너. HTTPS 인증서를 자동으로 받는다
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ..
+    env_file: .env.prod
+    # 마이그레이션을 올릴 때마다 돌린다. 공용 DB 라 팀에 먼저 알린다
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+    # 포트를 바깥에 열지 않는다. caddy 만 안쪽에서 부른다
+    expose:
+      - "8000"
+    depends_on:
+      ai:
+        condition: service_started
+    # 실측 전 임시값. 넘으면 컨테이너가 죽으니 로그를 보고 조정한다
+    mem_limit: 2g
+
+  ai:
+    build:
+      context: ../../drawtale-ai
+      dockerfile: runtime/Dockerfile
+    environment:
+      TORCHSERVE_URL: http://torchserve:8080
+    restart: unless-stopped
+    # **포트를 열지 않는다.** AI 서버에는 로그인 검사가 없다 (12 AI 아키텍처 2장)
+    expose:
+      - "8001"
+    depends_on:
+      torchserve:
+        condition: service_healthy
+    mem_limit: 2g
+
+  torchserve:
+    build:
+      context: ../../drawtale-ai/torchserve
+    restart: unless-stopped
+    # **포트를 열지 않는다.** ai 컨테이너만 부른다
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    # 모델 두 개를 올리므로 가장 크다. 일꾼은 모델마다 1개다 (config.properties)
+    mem_limit: 8g
+
+volumes:
+  caddy_data:
+  caddy_config:
