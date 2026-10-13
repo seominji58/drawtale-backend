@@ -37,7 +37,7 @@ services:
       ai:
         condition: service_started
     # 실측 전 임시값. 넘으면 컨테이너가 죽으니 로그를 보고 조정한다
-    mem_limit: 2g
+    mem_limit: 1g
 
   ai:
     build:
@@ -52,6 +52,7 @@ services:
     depends_on:
       torchserve:
         condition: service_healthy
+    # 실측 최대 1.1GB (2026-10-13, 로컬 리허설). 여유를 두고 2GB
     mem_limit: 2g
 
   torchserve:
@@ -66,8 +67,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
-    # 모델 두 개를 올리므로 가장 크다. 일꾼은 모델마다 1개다 (config.properties)
-    mem_limit: 8g
+    # 모델 두 개를 올린다. 일꾼은 모델마다 1개다 (config.properties).
+    # 실측 최대 1.9GB (2026-10-13) — 전에 8GB 로 잡았는데 과했다
+    mem_limit: 3g
 
 volumes:
   caddy_data:
