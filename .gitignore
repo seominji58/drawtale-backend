@@ -10,8 +10,12 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.prod.example
 
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
+
+# Local file storage
+storage/
