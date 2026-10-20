@@ -79,7 +79,9 @@ class RenderRequest(BaseModel):
     request_id: str = Field(description="analyze 응답의 request_id")
     joints: list[Joint]
     motion: str = Field(default="wave_hello_gentle", examples=["wave_hello_gentle"])
-    # 프레임 상한. 동작 전체에서 일정 간격으로 골라 그린다 (S-05 미리보기). None 이면 AI 기본
+    # 프레임 상한 (S-05 미리보기). **AI 서버가 아직 이 항목을 받지 않아 버려진다** —
+    # /internal/v1/render 는 request_id · joints · motion 만 받는다 (2026-10-20 확인).
+    # 동작 파일이 짧아져 상한 없이도 8초 안팎이라 급하지 않다
     max_frames: int | None = None
 
 

@@ -120,8 +120,15 @@ ACTION_MOTIONS: dict[str, str] = {
 DEFAULT_MOTION = "wave_hello_gentle"
 
 # S-05 미리보기. 브라우저 조각 애니메이션은 그림을 네모로 잘라 붙인 것처럼 보여서
-# (사용자, 2026-10-08) 분석 직후 Meta 로 짧게 렌더해 둔다. 동작 전체에서 150 프레임만 골라 그린다 —
-# 느린 노트북에서도 8초 안팎이라 S-04 의 30초 안에 들어간다
+# (사용자, 2026-10-08) 분석 직후 Meta 로 렌더해 둔다.
+#
+# 아래 상한은 **지금 아무 일도 하지 않는다.** AI 서버의 /internal/v1/render 는
+# request_id · joints · motion 만 받고, 보낸 max_frames 는 조용히 버려진다 (2026-10-20 확인).
+# 그래서 미리보기도 동작 전체를 그려 왔다.
+#
+# 대신 동작 파일 자체가 짧아져서 상한이 필요 없어졌다 — 손 흔들기가 15프레임(0.5초)이라
+# 렌더가 8초 안팎이고 S-04 의 30초 안에 들어간다 (drawtale-ai experiments/render-cost).
+# AI 서버에 상한을 붙일지는 정하지 않았다.
 PREVIEW_MAX_FRAMES = 150
 
 
