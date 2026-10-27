@@ -25,6 +25,22 @@ router = APIRouter(prefix="/stories", tags=["stories"])
 _ERRORS = {404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}}
 
 
+def book_response(book: dict | None, storage) -> dict | None:
+    """저장된 대본의 쪽 파일 경로를 주소로 바꾼다 (계약 2-6)."""
+
+    if not book:
+        return None
+    pages = [
+        {
+            **{k: v for k, v in p.items() if not k.endswith("_blob_path")},
+            "audio_url": storage.url(p.get("audio_blob_path")),
+            "animation_url": storage.url(p.get("animation_blob_path")),
+        }
+        for p in book["pages"]
+    ]
+    return {**book, "pages": pages}
+
+
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
@@ -78,7 +94,7 @@ def get_story(
         protagonist_voice=story.protagonist_voice,
         protagonist_name=story.protagonist_name,
         length=story.length,
-        book=story.book,
+        book=book_response(story.book, storage),
         text=story.text,
         audio_url=storage.url(story.audio_blob_path),
         animation_url=storage.url(story.animation_blob_path),

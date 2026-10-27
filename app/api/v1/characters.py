@@ -18,7 +18,13 @@ from app.schemas.character import (
     JointsUpdateRequest,
 )
 from app.schemas.common import AIJoint, BBox, ErrorResponse, JobStatus, JobType, Joint
-from app.services.jobs import current_joints, run_analyze_job, run_preview_job, wants_preview
+from app.services.jobs import (
+    current_joints,
+    run_analyze_job,
+    run_preview_job,
+    start_previews,
+    wants_preview,
+)
 from app.services.originals import delete_original, purge_expired_originals
 from app.services.storage import get_storage
 
@@ -165,14 +171,15 @@ def update_joints(
             character_id=character.id, joints=[j.model_dump(mode="json") for j in body.joints]
         )
     )
-    # 미리보기는 고친 관절로 다시 만든다. 그동안 preview_status 는 rendering (프론트가 다시 묻는다)
-    old_preview = character.preview_blob_path
+    # 미리보기 · 쪽 동작 영상은 고친 관절로 다시 만든다.
+    # 그동안 preview_status 는 rendering (프론트가 다시 묻는다)
+    old_files: list[str] = []
     if wants_preview(character):
-        character.preview_blob_path, character.preview_status = None, "rendering"
+        old_files = start_previews(character)
         background.add_task(run_preview_job, character.id)
     db.commit()
-    if old_preview != character.preview_blob_path:
-        get_storage().delete(old_preview)
+    for path in old_files:
+        get_storage().delete(path)
     db.refresh(character)
     return to_response(character)
 

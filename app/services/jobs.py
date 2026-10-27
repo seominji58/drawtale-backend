@@ -1,7 +1,9 @@
 """Background job runners. Each runner opens its own DB session (the request session is closed)."""
 
 import logging
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -25,7 +27,7 @@ from app.services.story_writer import (
     script_text,
 )
 from app.services.tts import ElevenLabsSpeech, get_tts
-from app.services.voices import cast_voices
+from app.services.voices import NARRATOR, cast_voices
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +78,7 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
             character.processing_time_ms = res.processing_time_ms
             character.status = JobStatus.succeeded
             if wants_preview(character):
-                character.preview_status = "rendering"
+                start_previews(character)
             _succeed(job)
         except AppError as e:
             character.status = JobStatus.failed
@@ -93,8 +95,7 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
         # 미리보기는 분석을 끝낸 뒤 만든다. S-04 는 30초 안에 넘어가야 해서 기다리게 하지 않는다 —
         # S-05 가 preview_status 를 다시 물으며 기다린다
         if character.preview_status == "rendering":
-            _store_preview(character, storage)
-            db.commit()
+            _store_previews(db, character, storage)
 
 
 # 이야기의 행동 단계를 애니메이션 동작으로 잇는다.
@@ -111,6 +112,10 @@ ACTION_MOTIONS: dict[str, str] = {
     "점프": "jumping_gentle",
     "춤": "jumping_gentle",
     "운동": "jumping_gentle",
+    # 문제별 행동 카드 (프론트 choices.ts ACTIONS_BY_PROBLEM, 2026-10-27 로컬 목업)
+    "놀았": "jumping_gentle",
+    "노래": "jumping_gentle",
+    "열매": "jumping_gentle",
     "물어": "wave_hello_gentle",
     "도와": "wave_hello_gentle",
     "불렀": "wave_hello_gentle",
@@ -142,22 +147,64 @@ def make_preview(character: Character, storage) -> str | None:
     if not character.ai_request_id:
         return None
     try:
-        ai = get_ai_client((character.image_width, character.image_height))
-        result = render_with_fallback(
-            ai,
-            RenderRequest(
-                request_id=character.ai_request_id,
-                joints=[Joint.model_validate(j) for j in current_joints(character)],
-                motion=DEFAULT_MOTION,
-                max_frames=PREVIEW_MAX_FRAMES,
-            ),
-        )
+        content = render_clip(character, DEFAULT_MOTION)
     except Exception:
         log.exception("미리보기 렌더 실패, 브라우저 애니메이션으로 대신합니다")
         return None
-    if not result.content:  # 목 AI
+    if not content:  # 목 AI
         return None
-    return storage.save(f"previews/{character.id}-{uuid.uuid4().hex[:8]}.mp4", result.content)
+    return storage.save(f"previews/{character.id}-{uuid.uuid4().hex[:8]}.mp4", content)
+
+
+def render_clip(character: Character, motion: str) -> bytes:
+    """짧은 동작 영상 (미리보기 · 쪽 동작). 동작 전체에서 PREVIEW_MAX_FRAMES 만 골라 그린다."""
+
+    ai = get_ai_client((character.image_width, character.image_height))
+    result = render_with_fallback(
+        ai,
+        RenderRequest(
+            request_id=character.ai_request_id,
+            joints=[Joint.model_validate(j) for j in current_joints(character)],
+            motion=motion,
+            max_frames=PREVIEW_MAX_FRAMES,
+        ),
+    )
+    return result.content
+
+
+# 긴 이야기 쪽 동작 중 미리 렌더해 둘 것 (손 흔들기는 미리보기가 맡는다).
+# 이야기를 만들 때 렌더하면 한 편이 2~5분 걸려서(2026-10-12 실측) 캐릭터를 만든 직후
+# 미리보기에 이어 렌더한다 — 아이가 이름을 짓고 카드를 고르는 동안 끝난다
+PRERENDER_MOTIONS = ("jumping_gentle",)
+# 이야기를 만들 때 미리 렌더가 아직 돌고 있으면 기다리는 시간. 넘으면 그 쪽들은 멈춘 그림
+PRERENDER_WAIT_SECONDS = 180
+
+
+def make_motion_clips(character: Character, storage) -> dict[str, str | None]:
+    """PRERENDER_MOTIONS 를 렌더해 {동작: 경로}. 실패한 동작은 None (이야기에서는 멈춘 그림)."""
+
+    clips: dict[str, str | None] = {}
+    for motion in PRERENDER_MOTIONS:
+        try:
+            content = render_clip(character, motion)
+        except Exception:
+            log.exception("쪽 동작 %s 미리 렌더 실패", motion)
+            content = None
+        clips[motion] = (
+            storage.save(f"previews/{character.id}-{uuid.uuid4().hex[:8]}-{motion}.mp4", content)
+            if content
+            else None
+        )
+    return clips
+
+
+def start_previews(character: Character) -> list[str]:
+    """미리보기 · 쪽 동작을 다시 만들 준비. 지울 옛 파일 경로를 돌려준다 (커밋한 뒤 지운다)."""
+
+    old = [character.preview_blob_path, *(character.motion_clips or {}).values()]
+    character.preview_blob_path, character.preview_status = None, "rendering"
+    character.motion_clips = {}
+    return [p for p in old if p]
 
 
 def wants_preview(character: Character) -> bool:
@@ -170,9 +217,20 @@ def wants_preview(character: Character) -> bool:
     )
 
 
-def _store_preview(character: Character, storage) -> None:
+def _store_previews(db, character: Character, storage) -> None:
+    """S-05 미리보기를 먼저 만들어 커밋하고(S-05 가 기다린다), 이어서 쪽 동작 영상."""
+
     character.preview_blob_path = make_preview(character, storage)
     character.preview_status = "ready" if character.preview_blob_path else "failed"
+    db.commit()
+    clips = make_motion_clips(character, storage)
+    db.refresh(character)
+    if character.motion_clips == {}:
+        character.motion_clips = clips
+        db.commit()
+    else:  # 그사이 관절을 다시 고쳤거나 원본을 지웠다 — 옛 관절로 만든 영상은 버린다
+        for path in clips.values():
+            storage.delete(path)
 
 
 def run_preview_job(character_id: uuid.UUID) -> None:
@@ -182,8 +240,7 @@ def run_preview_job(character_id: uuid.UUID) -> None:
         character = db.get(Character, character_id)
         if character is None or character.preview_status != "rendering":
             return
-        _store_preview(character, get_storage())
-        db.commit()
+        _store_previews(db, character, get_storage())
 
 
 def render_with_fallback(ai, req: RenderRequest):
@@ -266,7 +323,12 @@ def write_story_book(story: Story) -> Book:
         return fallback_book(choices, pages, story.protagonist_name, set(story.spoken or []))
     try:
         book = writer.write_book(
-            choices, set(story.spoken or []), pages, characters, story.protagonist_name
+            choices,
+            set(story.spoken or []),
+            pages,
+            characters,
+            story.protagonist_name,
+            story.extras,
         )
     except StoryBlocked:
         raise
@@ -321,6 +383,118 @@ def make_audio(story: Story, storage, script: Script | None = None) -> str | Non
         return None
 
 
+def render_story(story: Story, character: Character, storage) -> str | None:
+    """짧은 이야기의 영상 하나. 행동 문구로 동작을 고른다."""
+
+    ai = get_ai_client((character.image_width, character.image_height))
+    result = None
+    if character.ai_request_id:
+        result = render_with_fallback(
+            ai,
+            RenderRequest(
+                request_id=character.ai_request_id,
+                joints=[Joint.model_validate(j) for j in current_joints(character)],
+                motion=motion_for(story.action),
+            ),
+        )
+    if result and result.content:
+        return storage.save(f"results/{story.id}.mp4", result.content)
+    if character.original_deleted_at is None:
+        # Mock AI, or analysis done before the AI kept a session: show the drawing.
+        return character.upload_blob_path
+    # 원본을 지운 그림이다. 움직일 그림이 없으니 MP4 없이 둔다
+    # (프론트가 들고 있는 그림을 캔버스로 움직여 보여준다)
+    return None
+
+
+# 긴 이야기의 쪽 동작 → 렌더 동작. 렌더는 순화 동작 두 가지뿐이다 (팔이 뭉개지는 문제, 2026-09-29).
+# idle 쪽은 렌더하지 않는다 — 프론트가 멈춘 그림을 보여 준다
+PAGE_MOTIONS: dict[str, str | None] = {
+    "wave": "wave_hello_gentle",
+    "walk": "jumping_gentle",
+    "run": "jumping_gentle",
+    "jump": "jumping_gentle",
+    "dance": "jumping_gentle",
+    "idle": None,
+}
+# 쪽 음성을 동시에 몇 개까지 만드나. ElevenLabs 요금제마다 동시 요청 한도가 있다
+PAGE_AUDIO_WORKERS = 3
+
+
+def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
+    """쪽마다 MP3. 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다 (음성 비용이 늘지 않는다).
+
+    캐릭터 목소리 판이고 ElevenLabs 면 대사가 있는 쪽은 인물 목소리로 읽는다. 인물 → 목소리는
+    이야기 전체에서 한 번 정해 story.voice_cast 에 남긴다 (쪽마다 바뀌지 않게).
+    쪽 하나가 실패하면 그 쪽만 None — 프론트가 브라우저 TTS 로 읽는다.
+    """
+
+    tts = get_tts()
+    if tts is None:
+        log.info("TTS 키가 없어 쪽 음성을 만들지 않습니다")
+        return [None] * len(book.pages)
+
+    voices: dict[str, str] | None = None
+    speakers = [s for p in book.pages for s, _, _ in p.lines if s != NARRATOR]
+    if story.voice_mode == VoiceMode.characters and speakers and isinstance(tts, ElevenLabsSpeech):
+        voices = cast_voices(book.cast, story.protagonist_voice, tts.voice_id, speakers)
+        story.voice_cast = voices
+
+    def one(page) -> str | None:
+        try:
+            if voices and any(s != NARRATOR for s, _, _ in page.lines):
+                audio = tts.dialogue([Line(s, t, e) for s, t, e in page.lines], voices)
+            else:
+                audio = tts.speak(page.text())
+            return storage.save(f"results/{story.id}/page{page.page:02d}.mp3", audio)
+        except Exception:
+            log.exception("%d쪽 음성 실패, 그 쪽은 브라우저가 읽습니다", page.page)
+            return None
+
+    with ThreadPoolExecutor(PAGE_AUDIO_WORKERS) as ex:
+        return list(ex.map(one, book.pages))
+
+
+def make_page_clips(story: Story, character: Character, storage, book: Book) -> dict[str, str]:
+    """쪽 동작에 쓸 영상 {동작: 경로}. 동작마다 하나 (지금은 많아야 두 가지).
+
+    손 흔들기는 S-05 미리보기, 통통 뛰기는 캐릭터를 만든 직후 미리 렌더한 영상(motion_clips)을
+    이야기 폴더로 복사한다. 미리 만든 것이 없는 예전 그림만 여기서 렌더한다 (150프레임).
+    """
+
+    needed = {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}
+    ready = dict(character.motion_clips or {})
+    if character.preview_blob_path:
+        ready[DEFAULT_MOTION] = character.preview_blob_path
+    can_render = bool(character.ai_request_id) and character.original_deleted_at is None
+    clips: dict[str, str] = {}
+    for motion in sorted(needed):
+        try:
+            if ready.get(motion):
+                # 미리 만든 영상을 복사한다.
+                # 관절을 고치면 캐릭터 쪽 영상은 지워지므로 이야기에 따로 둔다
+                content = storage.read(ready[motion])
+            elif motion in ready or not can_render:
+                continue  # 미리 렌더가 실패했거나 아직이면 다시 하지 않는다 — 그 쪽은 멈춘 그림
+            else:
+                content = render_clip(character, motion)  # 예전 그림: 미리 만든 것이 없다
+        except Exception:
+            log.exception("쪽 동작 %s 영상 실패, 그 쪽은 멈춘 그림으로", motion)
+            continue
+        if content:
+            clips[motion] = storage.save(f"results/{story.id}/{motion}.mp4", content)
+    return clips
+
+
+def wait_for_motion_clips(db, character: Character) -> None:
+    """미리 렌더가 돌고 있으면(motion_clips == {}) 끝날 때까지 조금 기다린다."""
+
+    deadline = time.monotonic() + PRERENDER_WAIT_SECONDS
+    while character.motion_clips == {} and time.monotonic() < deadline:
+        time.sleep(2)
+        db.refresh(character)
+
+
 def run_story_job(job_id: uuid.UUID) -> None:
     with db_session.SessionLocal() as db:
         job = db.get(Job, job_id)
@@ -333,43 +507,31 @@ def run_story_job(job_id: uuid.UUID) -> None:
         storage = get_storage()
         try:
             if story.length == StoryLength.long:
-                # 긴 이야기: 쪽 단위 대본.
-                # 음성 · 영상은 아직 이야기 전체에 하나씩이다 (쪽마다는 다음 단계)
+                # 긴 이야기: 쪽 단위 대본, 쪽마다 음성 · 동작 영상. 이야기 전체 MP3 는 만들지 않는다
                 book = write_story_book(story)
-                story.book = book.to_json()
                 story.text = book.text()
-                script = book_script(book) if story.voice_mode == VoiceMode.characters else None
+                audio = make_page_audio(story, storage, book)
+                wait_for_motion_clips(db, character)
+                clips = make_page_clips(story, character, storage, book)
+                data = book.to_json()
+                for page, path in zip(data["pages"], audio, strict=True):
+                    page["audio_blob_path"] = path
+                    page["animation_blob_path"] = clips.get(PAGE_MOTIONS.get(page["action"]) or "")
+                story.book = data
+                story.audio_blob_path = None
+                if clips:
+                    story.animation_blob_path = next(iter(clips.values()))
+                elif character.original_deleted_at is None:
+                    story.animation_blob_path = character.upload_blob_path
+                else:
+                    story.animation_blob_path = None
             else:
                 script = (
                     write_story_script(story) if story.voice_mode == VoiceMode.characters else None
                 )
                 story.text = script_text(script) if script else write_story_text(story)
-            story.audio_blob_path = make_audio(story, storage, script)
-
-            ai = get_ai_client((character.image_width, character.image_height))
-
-            if character.ai_request_id:
-                result = render_with_fallback(
-                    ai,
-                    RenderRequest(
-                        request_id=character.ai_request_id,
-                        joints=[Joint.model_validate(j) for j in current_joints(character)],
-                        motion=motion_for(story.action),
-                    ),
-                )
-            else:
-                result = None
-
-            if result and result.content:
-                path = storage.save(f"results/{story.id}.mp4", result.content)
-                story.animation_blob_path = path
-            elif character.original_deleted_at is None:
-                # Mock AI, or analysis done before the AI kept a session: show the drawing.
-                story.animation_blob_path = character.upload_blob_path
-            else:
-                # 원본을 지운 그림이다. 움직일 그림이 없으니 MP4 없이 둔다
-                # (프론트가 들고 있는 그림을 캔버스로 움직여 보여준다)
-                story.animation_blob_path = None
+                story.audio_blob_path = make_audio(story, storage, script)
+                story.animation_blob_path = render_story(story, character, storage)
 
             story.status = JobStatus.succeeded
             _succeed(job)

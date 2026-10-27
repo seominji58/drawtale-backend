@@ -289,6 +289,7 @@ class StoryWriter:
         pages: int,
         characters: bool,
         name: str | None = None,
+        extras: dict[str, str] | None = None,
     ) -> Book:
         """긴 이야기. 네 칸(과 아이가 말로 덧붙인 말)을 뼈대로 쪽 단위 대본을 만든다.
 
@@ -298,7 +299,8 @@ class StoryWriter:
         끝내 안 맞으면 마지막 것을 쓴다 — 형식만 맞으면 이야기는 나온다.
         """
 
-        user_input = book_user_message(choices, spoken)
+        extras = {k: v for k, v in (extras or {}).items() if v}
+        user_input = book_user_message(choices, spoken, extras)
         self.check_input(user_input)
         if name:
             self.check_input(name)
@@ -316,7 +318,7 @@ class StoryWriter:
             res = self.client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": book_prompt(pages, characters, name)},
+                    {"role": "system", "content": book_prompt(pages, characters, name, extras)},
                     {"role": "user", "content": user_input},
                 ],
                 response_format={"type": "json_object"},

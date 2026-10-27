@@ -168,3 +168,27 @@ def test_short_story_has_no_book(client, png_bytes):
     )
     story = client.get(f"/api/v1/stories/{res.json()['story_id']}").json()
     assert story["length"] == "short" and story["book"] is None
+
+
+def test_extras_lines_and_rules():
+    """S-07 에서 더 받은 인물 · 기분 카드(시험, 2026-10-27).
+
+    그 단계 줄 다음에 들어가고 지시문에 규칙이 붙는다.
+    """
+    from app.services.book import book_prompt, book_user_message
+
+    choices = {
+        "place": "숲",
+        "problem": "어두워졌어요",
+        "action": "숨었어요",
+        "result": "친구를 만났어요",
+    }
+    extras = {"who": "강아지", "feel_problem": "무서웠어요", "feel_result": "기뻤어요"}
+    lines = book_user_message(choices, set(), extras).splitlines()
+    assert lines[1] == '함께 나오는 인물 — 아이가 고른 카드: "강아지"'
+    assert lines[3] == '문제 때 주인공 기분 — 아이가 고른 카드: "무서웠어요"'
+    assert lines[-1] == '마지막 주인공 기분 — 아이가 고른 카드: "기뻤어요"'
+    assert "아이가 더 고른 것" in book_prompt(8, False, None, extras)
+    # 없으면 예전과 같다
+    assert book_user_message(choices, set()).count("\n") == 3
+    assert "아이가 더 고른 것" not in book_prompt(8, False, None)

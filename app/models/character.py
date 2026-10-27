@@ -38,6 +38,11 @@ class Character(IdMixin, TimestampMixin, Base):
     preview_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
     # rendering | ready | failed. 미리보기를 만들지 않으면(목 AI, 원본 지움) 없다
     preview_status: Mapped[str | None] = mapped_column(String(10), default=None)
+    # 긴 이야기 쪽 동작 영상을 미리 렌더해 둔 것 {동작: 경로}.
+    # 미리보기에 이어서 만든다 (jobs.PRERENDER_MOTIONS).
+    # None: 만들지 않음(예전 그림 · 목 AI · 원본 지움) · {}: 만드는 중 ·
+    # 동작이 키로 있으면 끝남(실패는 값 None)
+    motion_clips: Mapped[dict | None] = mapped_column(JSON, default=None)
     # AI 서버가 분석 결과(원본·마스크)를 보관하는 세션 id. 렌더링 요청에 필요하다.
     ai_request_id: Mapped[str | None] = mapped_column(String(64), default=None)
     model_version: Mapped[str | None] = mapped_column(String(100), default=None)

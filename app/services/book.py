@@ -188,7 +188,30 @@ def page_plan(n: dict[str, int]) -> str:
     return " · ".join(out)
 
 
-def book_prompt(pages: int, characters: bool, name: str | None) -> str:
+# 네 칸 사이에 더 받는 칸 (2026-10-27 로컬 시험 — 회의에서 빼면 지운다, 프론트 open-decisions 0-11).
+# 이 칸은 단계(stage)가 아니다. 쪽 배치 · 순서 맞추기는 네 칸 그대로다
+EXTRA_KO = {
+    "who": "함께 나오는 인물",
+    "feel_problem": "문제 때 주인공 기분",
+    "feel_result": "마지막 주인공 기분",
+}
+# 이 칸을 어느 단계 줄 다음에 적나
+EXTRA_AFTER = {"who": "place", "feel_problem": "problem", "feel_result": "result"}
+EXTRA_RULES = """
+[아이가 더 고른 것 — 위 4번 · 5번보다 앞선다]
+- 「함께 나오는 인물」은 아이가 고른 인물이다. 장소나 문제 쪽부터 나오고, 이야기 끝까지 함께한다.
+  카드에 누군가 필요하면(「도와줬어요」 · 「물어봤어요」) 먼저 이 인물이 그 몫을 한다.
+  이 인물로 어색할 때만(엄마와 함께인데 「친구를 만났어요」) 그 카드에 꼭 필요한 인물 하나를 더한다.
+  그 밖에는 다른 인물을 새로 만들지 않는다.
+- 「문제 때 주인공 기분」은 문제 단계 쪽에서 주인공의 마음이다. 그 말을 거의 그대로 문장에 넣는다.
+- 「마지막 주인공 기분」은 마지막 쪽에서 주인공의 마음이다. 그 말을 거의 그대로 문장에 넣는다.
+- 아이가 고른 기분을 다른 기분으로 바꾸지 않는다. 기분이 슬퍼도 마지막 쪽은 따뜻하게 마무리한다.
+"""
+
+
+def book_prompt(
+    pages: int, characters: bool, name: str | None, extras: dict[str, str] | None = None
+) -> str:
     n = split_pages(pages)
     if characters:
         hero = name or "토토"
@@ -201,7 +224,7 @@ def book_prompt(pages: int, characters: bool, name: str | None) -> str:
         )
     else:
         hero, rule, dialogue = "나", HERO_FIRST.format(narrator=NARRATOR), ""
-    return SYSTEM.format(
+    prompt = SYSTEM.format(
         pages=sum(n.values()),
         page_plan=page_plan(n),
         hero_rule=rule,
@@ -209,15 +232,28 @@ def book_prompt(pages: int, characters: bool, name: str | None) -> str:
         hero=hero,
         narrator=NARRATOR,
     )
+    if extras:
+        # JSON 형식 안내 바로 앞에 넣는다
+        head, tail = prompt.split("JSON 으로만 답한다.", 1)
+        prompt = head + EXTRA_RULES.lstrip("\n") + "\nJSON 으로만 답한다." + tail
+    return prompt
 
 
-def book_user_message(choices: dict[str, str], spoken: set[str]) -> str:
-    """단계마다 한 줄. 아이가 말로 덧붙인 단계는 「아이가 한 말」로 알린다 (child_words 를 적게)."""
+def book_user_message(
+    choices: dict[str, str], spoken: set[str], extras: dict[str, str] | None = None
+) -> str:
+    """단계마다 한 줄. 아이가 말로 덧붙인 단계는 「아이가 한 말」로 알린다 (child_words 를 적게).
+
+    더 받은 칸(인물 · 기분)은 그 칸이 붙는 단계 줄 다음에 적는다. 카드로만 고른다.
+    """
 
     lines = []
     for s in STAGES:
         label = "아이가 한 말" if s in spoken else "아이가 고른 카드"
         lines.append(f'{STAGE_KO[s]} — {label}: "{choices[s]}"')
+        for k, after in EXTRA_AFTER.items():
+            if after == s and (extras or {}).get(k):
+                lines.append(f'{EXTRA_KO[k]} — 아이가 고른 카드: "{extras[k]}"')
     return "\n".join(lines)
 
 

@@ -32,6 +32,9 @@ class Story(IdMixin, TimestampMixin, Base):
     # 아이가 카드 대신 말로 덧붙인 단계 (place · problem · action · result).
     # 대본이 그 말을 그대로 살린다
     spoken: Mapped[list | None] = mapped_column(JSON, default=None)
+    # 네 칸 사이에 더 받은 칸 {who, feel_problem, feel_result} — 인물 · 기분 카드 라벨.
+    # 2026-10-27 로컬 시험 (회의에서 빼면 지운다). 긴 이야기 대본에만 쓴다
+    extras: Mapped[dict | None] = mapped_column(JSON, default=None)
     # 긴 이야기 대본 — 제목, 쪽마다 단계 · 동작 · 글 · 아이 말, 순서 맞추기 쪽 (Book.to_json)
     book: Mapped[dict | None] = mapped_column(JSON, default=None)
     text: Mapped[str | None] = mapped_column(Text, default=None)

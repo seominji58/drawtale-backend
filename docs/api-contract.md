@@ -256,6 +256,9 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 `spoken` (선택) — 카드 글자 대신 **아이가 말로 덧붙인 말**을 보낸 단계(`place` · `problem` · `action` · `result`).
 `long` 이면 대본이 그 말을 거의 그대로 살리고 그 쪽 `child_words` 에 적는다. 화면은 「내가 말한 부분」으로 보인다.
 
+`extras` (선택, 2026-10-27 **시험** — 회의에서 빼면 지운다) — S-07 네 칸 사이에 더 받은 카드 라벨 `{"who": "강아지", "feel_problem": "무서웠어요", "feel_result": "기뻤어요"}` (각 20자, 다 선택).
+`long` 대본에서 「함께 나오는 인물」은 그 인물이 카드 속 「누군가」 몫을 하고, 기분은 문제 쪽 · 마지막 쪽 주인공 마음으로 거의 그대로 쓴다. `short` 에는 아직 안 쓴다. 저장: `stories.extras`(JSON, migration `f8a1b2c3d4e5`). 프론트 `open-decisions.md` 0-11.
+
 `voice_mode` (선택, 기본 `narration`, 2026-10-08) — S-13 「읽어주기」.
 
 | 값 | `text` | `audio_url` |
@@ -299,7 +302,9 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
     "pages": [
       { "page": 1, "stage": "place", "action": "walk", "child_words": "",
         "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.",
-        "lines": [{ "speaker": "나레이션", "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.", "emotion": "" }] }
+        "lines": [{ "speaker": "나레이션", "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.", "emotion": "" }],
+        "audio_url": "http://127.0.0.1:8000/files/results/<story_id>/page01.mp3",
+        "animation_url": "http://127.0.0.1:8000/files/results/<story_id>/jumping_gentle.mp4" }
     ],
     "order_pages": [1, 2, 4, 6]
   },
@@ -320,8 +325,10 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 | `animation_url` | AI 서버가 렌더한 MP4 (3-3). 동작은 `action` 으로 고른다 (4번 표 6) | 목 AI 면 원본 그림 URL |
 
 `book` (2026-10-12) — `length=long` 일 때만. `text` 는 쪽 글을 이어 붙인 것이다.
-쪽의 `action`(idle · walk · run · jump · wave · dance)은 쪽마다 캐릭터 동작용인데 **아직 렌더에 쓰지 않는다** —
-음성 · 영상은 지금 이야기 전체에 하나씩이다 (쪽마다는 다음 단계, 프론트 open-decisions 0-6). `order_pages` 는 S-10 순서 맞추기에 쓸 쪽.
+**쪽마다 음성 · 동작 (2026-10-12)** — 쪽마다 `audio_url`(MP3)과 `animation_url`(MP4)이 온다. 긴 이야기는 이야기 전체 `audio_url` 을 만들지 않는다(`null`).
+- 음성: 쪽 글을 쪽마다 합성 (`results/{story_id}/page01.mp3` …). 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다. 캐릭터 목소리 판은 대사가 있는 쪽만 인물 목소리, 인물 → 목소리는 이야기 전체에서 한 번 정한다. 한 쪽이 실패하면 그 쪽만 `null`
+- 동작: 쪽 `action` 을 순화 동작으로 — `wave` → `wave_hello_gentle`, `walk` · `run` · `jump` · `dance` → `jumping_gentle`, `idle` → 영상 없음(멈춘 그림). 동작마다 한 번만 렌더(150프레임)하고 같은 동작 쪽은 같은 파일. `wave_hello_gentle` 은 S-05 미리보기 영상을 그대로 쓴다. 이야기 `animation_url` 은 첫 쪽 영상(없으면 그림)
+- `order_pages` 는 S-10 순서 맞추기에 쓸 쪽
 
 > moderation 에 걸리면 이야기는 `failed`, Job `error.code` 는 `CONTENT_BLOCKED` 다 (1-4).
 > 설정에 따라 값이 달라질 뿐 **응답 형식은 바뀌지 않는다.**

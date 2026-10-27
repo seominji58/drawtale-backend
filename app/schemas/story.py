@@ -38,6 +38,17 @@ class Stage(StrEnum):
     result = "result"
 
 
+class StoryExtras(BaseModel):
+    """네 칸 사이에 더 받는 칸. 카드 라벨만 온다 (아이 말 · 이름은 받지 않는다).
+
+    2026-10-27 로컬 시험 — 회의에서 빼면 지운다 (프론트 open-decisions 0-11).
+    """
+
+    who: str | None = Field(default=None, max_length=20, examples=["강아지"])
+    feel_problem: str | None = Field(default=None, max_length=20, examples=["무서웠어요"])
+    feel_result: str | None = Field(default=None, max_length=20, examples=["기뻤어요"])
+
+
 class StoryCreateRequest(BaseModel):
     character_id: uuid.UUID
     place: str = Field(min_length=1, max_length=50, examples=["학교"])
@@ -77,6 +88,12 @@ class StoryCreateRequest(BaseModel):
             "그 쪽에 child_words 로 표시한다"
         ),
     )
+    extras: StoryExtras | None = Field(
+        default=None,
+        description=(
+            "함께 나오는 인물 · 문제 때 기분 · 마지막 기분 카드. long 대본에만 쓴다 (시험)"
+        ),
+    )
 
 
 class BookLine(BaseModel):
@@ -96,6 +113,15 @@ class BookPage(BaseModel):
         default="", description="이 쪽에 그대로 들어간 아이 말. 없으면 빈 문자열"
     )
     lines: list[BookLine]
+    audio_url: str | None = Field(
+        default=None, description="이 쪽 MP3. 없으면 프론트가 브라우저 TTS 로 읽는다"
+    )
+    animation_url: str | None = Field(
+        default=None,
+        description=(
+            "이 쪽 동작 MP4 (동작이 같은 쪽은 같은 파일). idle 이거나 렌더를 못 했으면 없다"
+        ),
+    )
 
 
 class Book(BaseModel):
