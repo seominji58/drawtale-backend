@@ -304,9 +304,13 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
         "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.",
         "lines": [{ "speaker": "나레이션", "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.", "emotion": "" }],
         "audio_url": "http://127.0.0.1:8000/files/results/<story_id>/page01.mp3",
-        "animation_url": "http://127.0.0.1:8000/files/results/<story_id>/jumping_gentle.mp4" }
+        "animation_url": "http://127.0.0.1:8000/files/results/<story_id>/jumping_gentle.mp4",
+        "scene": { "hero_on_page": true,
+                   "characters": [{ "name": "할머니", "slot": "right-middle" }],
+                   "background": "A sunny forest path in the morning. 할머니 waves from under a tall tree." } }
     ],
-    "order_pages": [1, 2, 4, 6]
+    "order_pages": [1, 2, 4, 6],
+    "character_sheet": { "할머니": "a kind grandmother with gray bun hair, purple cardigan" }
   },
   "text": "오늘 나는 학교에 갔어요. ...",
   "audio_url": null,
@@ -329,6 +333,14 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 - 음성: 쪽 글을 쪽마다 합성 (`results/{story_id}/page01.mp3` …). 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다. 캐릭터 목소리 판은 대사가 있는 쪽만 인물 목소리, 인물 → 목소리는 이야기 전체에서 한 번 정한다. 한 쪽이 실패하면 그 쪽만 `null`
 - 동작: 쪽 `action` 을 순화 동작으로 — `wave` → `wave_hello_gentle`, `walk` · `run` · `jump` · `dance` → `jumping_gentle`, `idle` → 영상 없음(멈춘 그림). 동작마다 한 번만 렌더(150프레임)하고 같은 동작 쪽은 같은 파일. `wave_hello_gentle` 은 S-05 미리보기 영상을 그대로 쓴다. 이야기 `animation_url` 은 첫 쪽 영상(없으면 그림)
 - `order_pages` 는 S-10 순서 맞추기에 쓸 쪽
+
+**장면 계획 `scene` · `character_sheet` (2026-10-27)** — 배경을 실시간으로 그리고 그 안에 다른 인물을 함께 그리는 방향을 위해, 대본과 **같은 호출**에서 쪽마다 배경 그림 계획을 받는다 (Claude Opus 5.5 · effort medium, 실험 10편 10/10). **아직 그림을 그리지는 않는다** — 값만 내려간다.
+- `scene.hero_on_page`: 이 쪽에 주인공(아이 그림)이 나오나. 행동 · 결과 쪽은 늘 `true`. `true` 면 배경의 **왼쪽 아래 1/3 을 비우라는 말을 그림 부르는 쪽이 붙인다** (주인공 자리)
+- `scene.characters`: 배경에 함께 그릴 인물, 한 쪽에 최대 2명, 이야기 전체 최대 3명. `slot` 은 `right-middle` · `right-bottom`. 대본 인물(`characters`)에 없는 인물은 서버가 뺀다
+- `scene.background`: **영어** 배경 지시문 1~2문장(장소 · 시간 · 날씨 · 분위기 · 인물이 하는 일). 인물은 한글 이름으로만 적혀 있으니 그림 부를 때 `character_sheet` 의 생김새로 바꿔 붙인다. 화풍 · 글자 · 주인공 이름은 들어 있지 않다 (주인공 이름이나 글자가 들어가면 서버가 대본을 다시 쓰게 한다)
+- `character_sheet`: 인물 이름 → 영어 생김새. 쪽마다 같은 모습으로 그려지게 한 번만 정한다
+- 틀 문장 그림책(AI 실패)이거나 AI 가 장면 계획을 끝내 못 맞추면 `scene` 은 `null`, `character_sheet` 는 `{}` — 화면은 기본 배경을 쓴다
+- 말풍선은 받지 않는다 (pt_docs 14 「말풍선 없음」)
 
 > moderation 에 걸리면 이야기는 `failed`, Job `error.code` 는 `CONTENT_BLOCKED` 다 (1-4).
 > 설정에 따라 값이 달라질 뿐 **응답 형식은 바뀌지 않는다.**

@@ -12,6 +12,7 @@ from app.services.book import (
     card_stem,
     fallback_book,
     parse_book,
+    scene_problems,
     split_pages,
 )
 from app.services.voices import NARRATOR, PROTAGONIST
@@ -34,8 +35,29 @@ def _page(n, stage, text, action="walk", speaker=NARRATOR, child=""):
     }
 
 
-def _raw(pages, order=(1, 2, 4, 6), **extra):
-    return json.dumps({"title": "숲 이야기", "pages": pages, "order_pages": list(order), **extra})
+def _scene(pages, sheet=None, **page_over):
+    """쪽마다 기본 장면 계획. page_over 로 쪽 번호별 값을 바꾼다 (예: p3={...})."""
+
+    out = []
+    for p in pages:
+        sc = {
+            "page": p["page"],
+            "hero_on_page": True,
+            "characters": [],
+            "background": "A sunny forest path with tall green trees.",
+        }
+        sc.update(page_over.get(f"p{p['page']}", {}))
+        out.append(sc)
+    return {"character_sheet": sheet or {}, "pages": out}
+
+
+def _raw(pages, order=(1, 2, 4, 6), scene="auto", **extra):
+    if scene == "auto":
+        scene = _scene(pages)
+    data = {"title": "숲 이야기", "pages": pages, "order_pages": list(order), **extra}
+    if scene is not None:
+        data["scene"] = scene
+    return json.dumps(data)
 
 
 GOOD = [
@@ -95,6 +117,63 @@ def test_parse_book_protagonist_name_as_speaker():
     assert book.pages[3].lines[0][0] == PROTAGONIST
     assert "하루" not in book.cast
     assert book.pages[3].text() == "“집이 어디야?”"
+
+
+def test_parse_scene_fixes_hero_slots_and_unknown_people():
+    cast = [{"name": "할머니", "type": "어른-여"}, {"name": "친구", "type": "아이-남"}]
+    sheet = {"할머니": "a kind grandmother in a purple cardigan", "친구": "a boy in a red cap"}
+    scene = _scene(
+        GOOD,
+        sheet,
+        # 행동 쪽인데 주인공이 없다고 함 → 나오게 고친다
+        p4={"hero_on_page": False},
+        # 같은 자리 두 번 · 대본에 없는 인물 · 세 번째 인물
+        p2={
+            "characters": [
+                {"name": "할머니", "slot": "right-middle"},
+                {"name": "친구", "slot": "right-middle"},
+                {"name": "공룡", "slot": "right-bottom"},
+            ],
+            "background": "할머니 waves near a big tree on a windy afternoon.",
+        },
+        p1={"hero_on_page": False},
+    )
+    book = parse_book(_raw(GOOD, scene=scene, characters=cast))
+    assert book.pages[3].scene.hero is True
+    assert book.pages[0].scene.hero is False
+    assert book.pages[1].scene.characters == [("할머니", "right-middle"), ("친구", "right-bottom")]
+    assert set(book.character_sheet) == {"할머니", "친구"}
+    # 인물 이름(한글)은 지시문에 써도 된다
+    assert scene_problems(book) == []
+    data = book.to_json()
+    assert data["pages"][1]["scene"]["characters"][0] == {"name": "할머니", "slot": "right-middle"}
+    assert data["character_sheet"]["친구"] == "a boy in a red cap"
+
+
+def test_scene_problems_hero_name_text_and_missing():
+    # 주인공 이름을 지시문에 쓰면 그림 모델이 다른 아이를 그린다
+    scene = _scene(
+        GOOD,
+        p2={"background": "하루 walks along the path."},
+        p3={"background": "A wooden sign that says HELLO."},
+    )
+    book = parse_book(_raw(GOOD, scene=scene, protagonist="하루"))
+    probs = scene_problems(book)
+    assert len(probs) == 2 and probs[0].startswith("2쪽") and probs[1].startswith("3쪽")
+    assert book_problems(book, CHOICES, 7, characters=False) == probs
+
+    # 빠졌거나 쪽 수가 다르면 장면 계획을 버리고 다시 쓰게 한다
+    assert parse_book(_raw(GOOD, scene=None)).pages[0].scene is None
+    short = _scene(GOOD[:3])
+    book = parse_book(_raw(GOOD, scene=short))
+    assert all(p.scene is None for p in book.pages)
+    assert scene_problems(book) == ["장면 계획이 없거나 쪽 수가 다르다"]
+
+
+def test_fallback_book_has_no_scene():
+    book = fallback_book(CHOICES, 8)
+    assert all(p.scene is None for p in book.pages)
+    assert book.to_json()["pages"][0]["scene"] is None
 
 
 def test_book_problems_finds_missing_card_and_dialogue():

@@ -6,6 +6,13 @@ GPT 가 여러 쪽으로 풀어 쓴다. **이야기의 주인은 아이다** —
 대본 초안 · 검사기는 hankan-story/experiments/storybook-script.
 
 OpenAI 를 쓸 수 없으면 틀 문장으로 쪽을 채운다 (fallback_book). 그래서 키 없이도 흐름이 끝까지 돈다.
+
+장면 계획 (2026-10-27): 같은 대본 JSON 안에 쪽마다 배경 그림 계획(scene)도 받는다 —
+배경을 실시간으로 그리고 그 안에 다른 인물을 함께 그리는 방향.
+주인공(아이 그림)은 그리지 않고 화면이 위에 겹친다.
+한 번에 받기 · effort medium 은 experiments/storybook-script/compare_1027
+(10편 10/10, 편당 약 40초).
+카드 내용(장소 8 · 문제 · 행동 · 결과)은 아직 목업이라 지시문에 카드별 내용을 박지 않는다.
 """
 
 import json
@@ -41,6 +48,27 @@ def split_pages(pages: int) -> dict[str, int]:
     return n
 
 
+# 다른 인물을 그릴 자리. 왼쪽 아래 1/3 은 주인공 자리라 비워 둔다
+SLOTS = ("right-middle", "right-bottom")
+# 그림 지시문에 글자를 그리라는 말이 들어가면 안 된다 (글자는 화면이 따로 얹는다)
+_TEXT_WORDS = re.compile(
+    r"\b(text|letters?|written|words?|sign that says|caption|speech bubble|label)\b", re.I
+)
+
+
+@dataclass
+class Scene:
+    """한 쪽의 배경 그림 계획. 배경은 그림 생성 모델이 그리고 주인공은 화면이 위에 겹친다."""
+
+    # 이 쪽에 주인공이 나오나. 나오면 배경의 왼쪽 아래 1/3 을 비우라는 말을 그림 부르는 쪽이 붙인다
+    hero: bool
+    # (인물 이름, 자리). 이름은 Book.cast · character_sheet 에 있는 것만
+    characters: list[tuple[str, str]]
+    # 영어 배경 지시문 1~2문장. 인물은 이름으로만 — 생김새는 character_sheet 를 붙인다.
+    # 화풍은 넣지 않는다
+    background: str
+
+
 @dataclass
 class Page:
     page: int
@@ -50,6 +78,8 @@ class Page:
     lines: list[tuple[str, str, str]]
     # 이 쪽에 그대로 들어간 아이 말. 화면에서 「내가 말한 부분」으로 보인다
     child_words: str = ""
+    # 배경 그림 계획. 틀 문장 그림책이거나 AI 가 빼먹으면 None (화면은 기본 배경)
+    scene: Scene | None = None
 
     def text(self) -> str:
         return " ".join(t if s == NARRATOR else f"“{t}”" for s, t, _ in self.lines)
@@ -64,6 +94,8 @@ class Book:
     protagonist: str = ""
     # 인물 이름 → 종류 (voices.VOICE_TYPES). 주인공은 넣지 않는다
     cast: dict[str, str] = field(default_factory=dict)
+    # 배경에 그릴 인물 이름 → 영어 생김새. 쪽마다 같은 모습으로 그려지게 지시문에 그대로 붙인다
+    character_sheet: dict[str, str] = field(default_factory=dict)
 
     def text(self) -> str:
         return " ".join(p.text() for p in self.pages)
@@ -79,10 +111,17 @@ class Book:
                     "text": p.text(),
                     "child_words": p.child_words,
                     "lines": [{"speaker": s, "text": t, "emotion": e} for s, t, e in p.lines],
+                    "scene": p.scene
+                    and {
+                        "hero_on_page": p.scene.hero,
+                        "characters": [{"name": n, "slot": s} for n, s in p.scene.characters],
+                        "background": p.scene.background,
+                    },
                 }
                 for p in self.pages
             ],
             "order_pages": self.order_pages,
+            "character_sheet": self.character_sheet,
         }
 
 
@@ -144,6 +183,25 @@ SYSTEM = """너는 아이가 만든 이야기를 그림책 대본으로 옮겨 �
 {dialogue_rule}[순서 맞추기]
 - order_pages 에 네 단계를 하나씩 대표하는 쪽 번호 4개를 장소 · 문제 · 행동 · 결과 순서로 적는다.
 
+[배경 그림 계획 — 같은 JSON 에 scene 으로 함께 적는다]
+배경 그림은 그림 생성 모델이 그리고, 주인공(아이가 그린 그림)은 나중에 화면이 그 위에 겹친다.
+- 주인공은 그리지 않는다. 대신 hero_on_page 로 그 쪽에 주인공이 나오는지 정한다.
+  행동(action) · 결과(result) 단계 쪽에는 반드시 나온다. 전체 쪽의 절반 이상에 나온다.
+  주인공이 나오는 쪽의 배경은 왼쪽 아래 1/3 을 비워 둔다
+  (그 말은 화면이 지시문에 붙이니 background 에 쓰지 않는다).
+- 다른 인물은 characters 에 적은 인물만 그린다. 새 인물을 만들지 않는다. 이야기 전체에서 최대 3명.
+  한 쪽에 주인공 말고 최대 2명. 인물마다 자리를 정한다: "right-middle" 또는 "right-bottom"
+  (한 쪽에 같은 자리 두 번 금지).
+- character_sheet 에 그리는 인물마다 생김새를 영어로 한 번만 정한다
+  (예: "a kind grandmother with gray bun hair, purple cardigan").
+  쪽마다 같은 모습으로 그려지도록 화면이 이 문장을 그대로 붙인다.
+  background 에는 생김새를 다시 쓰지 않고 이름만 쓴다.
+- background 는 영어로, 그 쪽에서 보이는 장소 · 시간 · 날씨 · 분위기 · 인물이 하는 일을 1~2문장으로.
+  주인공 이름은 쓰지 않는다 (쓰면 그림 모델이 다른 아이를 그린다).
+  글자 · 간판 · 말풍선 · 숫자를 그림에 넣으라고 하지 않는다 (글자는 화면이 따로 얹는다).
+  무섭거나 위험한 모습, 실제 사람 · 상표를 넣지 않는다. 화풍은 화면이 정하니 쓰지 않는다.
+- scene.pages 는 대본 pages 와 쪽 수가 같다.
+
 JSON 으로만 답한다.
 {{"title": "8~15자 제목",
  "protagonist": "{hero}",
@@ -152,7 +210,11 @@ JSON 으로만 답한다.
   {{"page": 1, "stage": "place", "action": "walk", "child_words": "",
     "lines": [{{"speaker": "{narrator}", "text": "…"}}]}}
  ],
- "order_pages": [1, 3, 5, 7]}}"""
+ "order_pages": [1, 3, 5, 7],
+ "scene": {{"character_sheet": {{"친구": "영어 생김새"}},
+           "pages": [{{"page": 1, "hero_on_page": true,
+                      "characters": [{{"name": "친구", "slot": "right-middle"}}],
+                      "background": "영어 배경 지시문"}}]}}}}"""
 
 HERO_FIRST = (
     '- 주인공은 「나」로 쓴다. lines 의 speaker 는 모두 "{narrator}" 이다.\n'
@@ -318,7 +380,76 @@ def parse_book(raw: str, name: str | None = None) -> Book:
         next((p.stage for p in pages if p.page == k), None) for k in order
     ] != list(STAGES):
         order = [first[s] for s in STAGES]
-    return Book(title, pages, order, "" if protagonist == "나" else protagonist, cast)
+    book = Book(title, pages, order, "" if protagonist == "나" else protagonist, cast)
+    parse_scene(book, data.get("scene"))
+    return book
+
+
+def parse_scene(book: Book, data) -> None:
+    """대본 JSON 의 scene 을 쪽마다 붙인다. 고칠 수 있는 것은 고친다.
+
+    - 행동 · 결과 쪽은 주인공이 나오게
+    - 대본 characters 에 없거나 생김새가 없는 인물, 한 쪽 세 번째 인물, 이야기 네 번째 인물은 뺀다
+    - 자리가 틀리거나 겹치면 남은 자리로
+
+    쪽 수가 다르거나 형식이 틀리면 장면 계획을 통째로 버린다 (book_problems 가 다시 쓰게 한다).
+    고칠 수 없는 것(지시문에 한글 · 글자)은 그대로 두고 book_problems 가 찾는다.
+    """
+
+    if not isinstance(data, dict):
+        return
+    try:
+        raw_sheet = data.get("character_sheet") or {}
+        sheet = {
+            str(k).strip(): str(v).strip()
+            for k, v in raw_sheet.items()
+            if str(k).strip() and str(v).strip()
+        }
+        plans = list(data.get("pages") or [])
+        if len(plans) != len(book.pages):
+            return
+        scenes, used = [], []
+        for p, plan in zip(book.pages, plans, strict=True):
+            chars, free = [], list(SLOTS)
+            for c in plan.get("characters") or []:
+                name = str(c.get("name") or "").strip()
+                if name not in book.cast or name not in sheet or not free:
+                    continue
+                if name not in used:
+                    if len(used) >= 3:
+                        continue
+                    used.append(name)
+                slot = str(c.get("slot") or "").strip()
+                slot = slot if slot in free else free[0]
+                free.remove(slot)
+                chars.append((name, slot))
+            hero = bool(plan.get("hero_on_page")) or p.stage in ("action", "result")
+            scenes.append(Scene(hero, chars, str(plan.get("background") or "").strip()))
+    except (TypeError, AttributeError):
+        return
+    for p, sc in zip(book.pages, scenes, strict=True):
+        p.scene = sc
+    book.character_sheet = {k: v for k, v in sheet.items() if k in used}
+
+
+def scene_problems(book: Book) -> list[str]:
+    """장면 계획에서 고칠 수 없어 다시 쓰게 할 것."""
+
+    if any(p.scene is None for p in book.pages):
+        return ["장면 계획이 없거나 쪽 수가 다르다"]
+    out = []
+    # 인물 이름(한글)은 지시대로 쓰니 빼고 본다 — 그림 부르는 쪽이 생김새 문장으로 바꿔 붙인다
+    names = sorted(set(book.cast) | set(book.character_sheet), key=len, reverse=True)
+    for p in book.pages:
+        bare = p.scene.background
+        if not bare:
+            out.append(f"{p.page}쪽 배경 지시문이 비었다")
+            continue
+        for nm in names:
+            bare = bare.replace(nm, "")
+        if _TEXT_WORDS.search(bare) or re.search(r"[가-힣]", bare):
+            out.append(f"{p.page}쪽 배경 지시문에 글자 · 한글(주인공 이름)이 있다")
+    return out
 
 
 _SENT = re.compile(r"[^.!?。]+[.!?。]")
@@ -341,7 +472,7 @@ def book_problems(book: Book, choices: dict[str, str], pages: int, characters: b
         text = " ".join(p.text() for p in book.pages if p.stage == s)
         if not mentions(choices[s], text):
             out.append(f"{STAGE_KO[s]} 「{choices[s]}」 가 그 단계 쪽에 없다")
-    return out
+    return out + scene_problems(book)
 
 
 def mentions(card: str, text: str) -> bool:
@@ -380,6 +511,8 @@ def fallback_book(
     choices: dict[str, str], pages: int, name: str | None = None, spoken: set[str] | None = None
 ) -> Book:
     """OpenAI 를 쓸 수 없을 때의 틀 문장 그림책. 네 칸 글자는 그대로 들어간다.
+
+    장면 계획은 없다 (scene=None — 화면은 기본 배경).
 
     아이가 말로 덧붙인 단계는 그 단계 첫 쪽에 아이 말을 child_words 로 표시한다.
     """
