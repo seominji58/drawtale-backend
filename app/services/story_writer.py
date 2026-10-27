@@ -1,4 +1,4 @@
-"""OpenAI로 이야기를 만들고 부적절한 내용을 걸러낸다.
+"""OpenAI로 이야기를 만들고 부적절한 내용을 걸러낸다. 긴 이야기 대본은 Claude(Anthropic)가 먼저다.
 
 글을 막 배우는 아이가 읽고 들을 글이라 문장을 짧고 쉽게 만드는 것이 가장 중요하다.
 API 키가 없거나 호출이 실패하면 템플릿 문장으로 대체해 서비스가 멈추지 않게 한다.
@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+import anthropic
 from openai import OpenAI, OpenAIError
 
 from app.core.config import get_settings
@@ -202,9 +203,26 @@ def has_dialogue(script: Script) -> bool:
     return any(line.speaker != NARRATOR for parts in script.sentences for line in parts)
 
 
+def json_part(text: str) -> str:
+    """모델 답에서 JSON 부분만. Claude 는 JSON 모드가 없어 앞뒤에 말이나 ``` 를 붙일 때가 있다."""
+
+    a, b = text.find("{"), text.rfind("}")
+    return text[a : b + 1] if a != -1 and b > a else text
+
+
 class StoryWriter:
-    def __init__(self, api_key: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        timeout: float = 30.0,
+        claude_key: str = "",
+        claude_timeout: float = 180.0,
+    ) -> None:
         self.client = OpenAI(api_key=api_key, timeout=timeout)
+        # 긴 이야기 대본용. 없으면 OpenAI 모델로 쓴다
+        self.claude = (
+            anthropic.Anthropic(api_key=claude_key, timeout=claude_timeout) if claude_key else None
+        )
 
     def check_input(self, text: str) -> None:
         """아이가 입력한 내용에 부적절한 표현이 있는지 확인한다. (무료)"""
@@ -305,27 +323,15 @@ class StoryWriter:
         if name:
             self.check_input(name)
 
-        model = get_settings().story_book_model
-        params: dict = {"max_tokens": 2000, "temperature": 0.8}
-        if model.startswith(("gpt-5", "o3", "o4")):
-            # 추론 모델은 temperature 를 받지 않고 토큰 한도 이름이 다르다
-            params = {"max_completion_tokens": 8000}
+        system = book_prompt(pages, characters, name, extras)
         # 아이 입력이 걸리면 위에서 막는다(StoryBlocked). AI 가 쓴 글이 걸리면 아이 탓이 아니므로
         # 다시 쓰게 하고, 끝내 걸리면 OpenAIError — 부르는 쪽이 틀 문장 그림책으로 대신한다
         # (「넘어졌어요」 이야기의 대본이 violence 로 걸린 적 있음, 2026-10-12)
         best = None
         for _ in range(3):
-            res = self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": book_prompt(pages, characters, name, extras)},
-                    {"role": "user", "content": user_input},
-                ],
-                response_format={"type": "json_object"},
-                **params,
-            )
+            raw = self.book_completion(system, user_input)
             try:
-                book = parse_book(res.choices[0].message.content or "", name)
+                book = parse_book(raw, name)
             except ValueError as e:
                 log.info("그림책 대본 형식이 틀려 다시 씁니다: %s", e)
                 continue
@@ -347,11 +353,49 @@ class StoryWriter:
             raise OpenAIError("쓸 수 있는 그림책 대본을 받지 못했다")
         return best
 
+    def book_completion(self, system: str, user: str) -> str:
+        """그림책 대본 JSON 한 번. Claude 가 있으면 Claude, 실패하면 그 시도만 OpenAI 모델로."""
+
+        s = get_settings()
+        if self.claude is not None and s.story_book_provider == "anthropic":
+            try:
+                res = self.claude.messages.create(
+                    model=s.story_book_claude_model,
+                    # 생각 토큰도 여기에 든다. 16000 을 넘기면 스트리밍으로 받아야 한다
+                    max_tokens=16000,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                    output_config={"effort": s.story_book_effort},
+                )
+                text = "".join(b.text for b in res.content if b.type == "text")
+                if res.stop_reason == "max_tokens":
+                    log.info("Claude 대본이 토큰 한도에서 잘렸습니다")
+                return json_part(text)
+            except anthropic.APIError:
+                log.exception("Claude 대본 호출 실패, 이번 시도는 OpenAI 모델로 씁니다")
+        model = s.story_book_model
+        params: dict = {"max_tokens": 2000, "temperature": 0.8}
+        if model.startswith(("gpt-5", "o3", "o4")):
+            # 추론 모델은 temperature 를 받지 않고 토큰 한도 이름이 다르다
+            params = {"max_completion_tokens": 8000}
+        res = self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+            **params,
+        )
+        return res.choices[0].message.content or ""
+
 
 def get_story_writer() -> StoryWriter | None:
     """API 키가 없으면 None을 돌려준다. 호출하는 쪽에서 템플릿으로 대체한다."""
 
-    key = get_settings().openai_api_key
-    if not key:
+    s = get_settings()
+    if not s.openai_api_key:
         return None
-    return StoryWriter(key, timeout=get_settings().openai_timeout_seconds)
+    return StoryWriter(
+        s.openai_api_key,
+        timeout=s.openai_timeout_seconds,
+        claude_key=s.anthropic_api_key,
+        claude_timeout=s.anthropic_timeout_seconds,
+    )

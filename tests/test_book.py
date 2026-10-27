@@ -192,3 +192,68 @@ def test_extras_lines_and_rules():
     # 없으면 예전과 같다
     assert book_user_message(choices, set()).count("\n") == 3
     assert "아이가 더 고른 것" not in book_prompt(8, False, None)
+
+
+class _FakeClaude:
+    """messages.create 만 흉내 낸다. answers 를 차례로 돌려주거나, 예외면 던진다."""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.calls = []
+        self.messages = self
+
+    def create(self, **kw):
+        from types import SimpleNamespace
+
+        self.calls.append(kw)
+        a = self.answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=a)], stop_reason="end_turn"
+        )
+
+
+def _writer(monkeypatch, claude):
+    from app.services import story_writer as sw
+
+    w = sw.StoryWriter("sk-test")
+    w.claude = claude
+    monkeypatch.setattr(w, "check_input", lambda text: None)
+    return w
+
+
+def test_book_uses_claude_and_strips_fence(monkeypatch):
+    """긴 이야기 대본은 Claude 가 먼저 (2026-10-27). JSON 앞뒤의 ``` 는 떼고 읽는다."""
+
+    claude = _FakeClaude(["```json\n" + _raw(GOOD) + "\n```"])
+    w = _writer(monkeypatch, claude)
+    book = w.write_book(CHOICES, {"problem"}, 7, False)
+    assert book.pages[0].text().startswith("오늘 나는 숲에")
+    kw = claude.calls[0]
+    assert kw["model"] == "claude-opus-5-5"
+    assert kw["output_config"] == {"effort": "medium"}
+    assert "그림책 대본" in kw["system"]
+
+
+def test_book_falls_back_to_openai_when_claude_fails(monkeypatch):
+    """Claude 호출이 실패하면 그 시도는 OpenAI 모델로 쓴다."""
+
+    import anthropic
+    import httpx
+
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    w = _writer(monkeypatch, _FakeClaude([err]))
+    used = []
+
+    def fake_openai(**kw):
+        from types import SimpleNamespace
+
+        used.append(kw["model"])
+        msg = SimpleNamespace(content=_raw(GOOD))
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+
+    monkeypatch.setattr(w.client.chat.completions, "create", fake_openai)
+    book = w.write_book(CHOICES, set(), 7, False)
+    assert used == ["gpt-5.4-mini"]
+    assert len(book.pages) == 7

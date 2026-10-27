@@ -251,7 +251,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 | 값 | 무엇 |
 |---|---|
 | `short` | 지금까지와 같다. 네 칸 → 네 문장 (`book` 은 `null`) |
-| `long` | **네 칸을 뼈대로 쪽 단위 그림책.** 쪽 수는 서버 설정 `STORY_PAGES`(기본 8, 7~11). 장소 1~2 · 문제 2~3 · 행동 2~3 · 결과 2~3쪽으로 나누고, 쪽마다 어느 칸에서 나왔는지(`stage`)를 적는다. 아이가 고르지 않은 큰 사건(다른 장소 · 새 문제 · 새 악당 · 다른 결말)은 만들지 않고, 고른 일을 장면으로 펼쳐 보이기만 한다 (흉내말 · 마음 · 짧은 대사). 모델은 `STORY_BOOK_MODEL`(기본 `gpt-5.4-mini`). AI 가 쓴 대본이 moderation 에 걸리면 다시 쓰고, 끝내 걸리거나 키가 없거나 실패하면 틀 문장 그림책. 대본 규칙은 `app/services/book.py` |
+| `long` | **네 칸을 뼈대로 쪽 단위 그림책.** 쪽 수는 서버 설정 `STORY_PAGES`(기본 8, 7~11). 장소 1~2 · 문제 2~3 · 행동 2~3 · 결과 2~3쪽으로 나누고, 쪽마다 어느 칸에서 나왔는지(`stage`)를 적는다. 아이가 고르지 않은 큰 사건(다른 장소 · 새 문제 · 새 악당 · 다른 결말)은 만들지 않고, 고른 일을 장면으로 펼쳐 보이기만 한다 (흉내말 · 마음 · 짧은 대사). 모델은 **Claude Opus 5.5**(`STORY_BOOK_PROVIDER=anthropic` · `STORY_BOOK_CLAUDE_MODEL` · `STORY_BOOK_EFFORT=medium`, 2026-10-27). `ANTHROPIC_API_KEY` 가 없거나 Claude 가 실패하면 `STORY_BOOK_MODEL`(OpenAI, 기본 `gpt-5.4-mini`). 대본 한 번에 약 30~40초. AI 가 쓴 대본이 moderation 에 걸리면 다시 쓰고, 끝내 걸리거나 키가 없거나 실패하면 틀 문장 그림책. 대본 규칙은 `app/services/book.py` |
 
 `spoken` (선택) — 카드 글자 대신 **아이가 말로 덧붙인 말**을 보낸 단계(`place` · `problem` · `action` · `result`).
 `long` 이면 대본이 그 말을 거의 그대로 살리고 그 쪽 `child_words` 에 적는다. 화면은 「내가 말한 부분」으로 보인다.

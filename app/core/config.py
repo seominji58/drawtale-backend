@@ -36,6 +36,20 @@ class Settings(BaseSettings):
     # gpt-4o-mini 는 카드 뜻을 뒤집고(도와줬어요 → 도움을 요청) 쪽 배치를 어겨서 바꿨다
     # (2026-10-12 4편 비교)
     story_book_model: str = "gpt-5.4-mini"
+    # 긴 이야기 대본 업체: "anthropic"(기본) | "openai".
+    # Claude Opus 5.5 로 바꿨다 (2026-10-27, 30편 비교: 대본 30/30 · 장면 계획 30/30 ·
+    # 위험한 아이 말을 상상으로 바꿈. gpt-5.4-mini 는 29/30 · 20/30 —
+    # hankan-story/experiments/storybook-script/compare_1027).
+    # ANTHROPIC_API_KEY 가 없거나 Claude 호출이 실패하면 위 story_book_model(OpenAI)로,
+    # 그것도 안 되면 틀 문장 그림책. 검열(moderation)은 그대로 OpenAI 라서
+    # OPENAI_API_KEY 가 필요하다
+    story_book_provider: str = "anthropic"
+    anthropic_api_key: str = ""
+    anthropic_timeout_seconds: float = 180
+    story_book_claude_model: str = "claude-opus-5-5"
+    # 생각 정도: low | medium | high. medium 이 low 보다 첫 시도 실수가 적었다
+    # (10편 시험, 편당 약 40초 · $0.10)
+    story_book_effort: str = "medium"
     tts_api_key: str = ""
     tts_timeout_seconds: float = 60
     # 이야기 음성 업체: "openai" (기본) | "elevenlabs". 청취 비교 후 팀이 고른다
