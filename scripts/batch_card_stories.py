@@ -36,7 +36,7 @@ from app.services.voices import NARRATOR
 OUT = Path("storage/card_stories")
 ROWS = OUT / "all.jsonl"
 STATE = OUT / "batch_state.json"
-PROMPT_VERSION = "2026-10-28e"  # e: 첫 쪽 자리 돌리기 · 제목 · 이름 밝힌 어른, 배치
+PROMPT_VERSION = "2026-10-28e"  # e: 첫 쪽 자리 돌리기 · 제목 · 이름 밝힌 어른, 배치 (넘어짐을 가볍게 — 다시 만든 편에만)
 PRICE_IN, PRICE_OUT = 2 / 1e6, 10 / 1e6
 # 한 요청 평균 토큰 (2026-10-28 실측) — 보내기 전에 예산을 넘는지 본다
 AVG = {"base": (5200, 5600), "fix": (3500, 1200), "lc": (1800, 1650), "sn": (1800, 700), "sc": (2600, 1350)}
@@ -205,13 +205,20 @@ def needs_full(base_row: dict) -> bool:
     return bool(UNKNOWN_ADULT.search(t) and not KNOWN_ROLE.search(t))
 
 
+REDO_FLAGGED = False  # --redo-flagged: 세 번 걸린 채 저장된 편을 한 번 더 만든다
+
+
+def flagged(r: dict | None) -> bool:
+    return bool(REDO_FLAGGED and r and r.get("problems"))
+
+
 def plan(rows: dict, failed: dict) -> tuple[dict, dict]:
     """(1단계 요청, 2단계 요청). 키는 custom_id. 세 번 걸린 것은 걸린 채로 저장돼 있어 다시 보내지 않는다."""
 
     stage1, stage2 = {}, {}
     for k, c in COMBO_BY_KEY.items():
         b = rows.get((k, "long", "narration"))
-        if b is None:
+        if b is None or flagged(b):
             if failed.get(f"base-{k}", 0) < 3:
                 stage1[f"base-{k}"] = base_request(c)
             continue
@@ -223,7 +230,7 @@ def plan(rows: dict, failed: dict) -> tuple[dict, dict]:
         bsig = sig(b["payload"])
         for kind, code in KIND_CODE.items():
             d = rows.get((k, *kind))
-            if (d is None or d.get("base_sig") != bsig) and failed.get(f"{code}-{k}", 0) < 3:
+            if (d is None or d.get("base_sig") != bsig or flagged(d)) and failed.get(f"{code}-{k}", 0) < 3:
                 stage2[f"{code}-{k}"] = variant_request(kind, c, b["payload"])
     return stage1, stage2
 
@@ -262,6 +269,10 @@ def already_saved(rows: dict, code: str, k: str) -> bool:
     """이 요청의 결과가 이미 저장됐나 — 같은 배치를 두 번 읽어도 두 번 저장하지 않는다."""
 
     b = rows.get((k, "long", "narration"))
+    if code == "base" and flagged(b):
+        return False
+    if code in KIND_CODE.values() and flagged(rows.get((k, *CODE_KIND[code]))):
+        return False
     if code in ("base", "fix"):
         return b is not None and b["prompt_version"] == PROMPT_VERSION
     d = rows.get((k, *CODE_KIND[code]))
@@ -325,7 +336,10 @@ def main() -> None:
     ap.add_argument("--budget", type=float, required=True, help="이번 실행에서 새로 보낼 요청에 쓸 최대 달러")
     ap.add_argument("--limit", type=int, default=0, help="시험: 단계마다 이 수만 보낸다")
     ap.add_argument("--only", nargs="*", default=[], help="시험: 이 종류만 (base fix lc sn sc)")
+    ap.add_argument("--redo-flagged", action="store_true", help="검사에 걸린 채 저장된 편을 한 번 더 만든다")
     a = ap.parse_args()
+    global REDO_FLAGGED
+    REDO_FLAGGED = a.redo_flagged
     s = get_settings()
     if not s.anthropic_api_key:
         sys.exit("ANTHROPIC_API_KEY 가 없다")
@@ -351,6 +365,13 @@ def main() -> None:
         state["recheck_1028"] = True
         save_state(state)
         log(f"고친 자리 검사로 {fixed_rows}편을 다시 판정했다 · 실패 횟수 초기화")
+
+    if REDO_FLAGGED:
+        for (k, length, mode), r in load_rows().items():
+            if r.get("problems"):
+                code = "base" if (length, mode) == ("long", "narration") else KIND_CODE[(length, mode)]
+                state["failed"].pop(f"{code}-{k}", None)
+        save_state(state)
 
     # 먼저: 보내 놓고 아직 읽지 않은 배치 (노트북이 꺼졌던 사이 서버에서 끝났을 수 있다). 새로 보내지 않고 받아 온다
     for bid in [b for b in state.get("batches", []) if b not in state["processed"]]:

@@ -1,5 +1,7 @@
 """Background job runners. Each runner opens its own DB session (the request session is closed)."""
 
+import hashlib
+import json
 import logging
 import time
 import uuid
@@ -339,6 +341,60 @@ def write_story_book(story: Story) -> Book:
     return book
 
 
+def card_audio_key(stored, story: Story) -> str:
+    """미리 만든 이야기 음성을 다시 쓸 열쇠 (pt_docs 13 1-1 「(이야기, 이름)마다 처음 요청 때 만들어 저장」).
+
+    이야기 내용 · 이름 · 읽어주기 · 주인공 목소리 · 음성 업체와 목소리가 같으면 같은 음성이다.
+    이야기를 다시 만들면(내용이 바뀌면) 열쇠도 바뀐다."""
+
+    s = get_settings()
+    parts = [
+        json.dumps(stored.payload, ensure_ascii=False, sort_keys=True), story.length, story.voice_mode,
+        story.protagonist_name or "", story.protagonist_voice, s.tts_provider, s.elevenlabs_voice_id,
+    ]
+    return f"card_audio/{stored.id}/" + hashlib.sha1("".join(map(str, parts)).encode()).hexdigest()[:16]
+
+
+def _read(storage, path: str) -> bytes | None:
+    try:
+        return storage.read(path)
+    except Exception:
+        return None
+
+
+def cached_page_audio(story: Story, storage, book: Book, key: str) -> list[str | None]:
+    """긴 저장본 이야기의 쪽 음성. 만들어 둔 것이 있으면 이 이야기 폴더로 복사하고, 없으면 만들어서 둔다."""
+
+    cast = _read(storage, f"{key}/cast.json")
+    pages = [_read(storage, f"{key}/page{p.page:02d}.mp3") for p in book.pages]
+    if cast is not None and all(pages):
+        log.info("story %s: 만들어 둔 음성을 다시 씁니다 (%s)", story.id, key)
+        story.voice_cast = json.loads(cast) or None
+        return [storage.save(f"results/{story.id}/page{p.page:02d}.mp3", a) for p, a in zip(book.pages, pages, strict=True)]
+    paths = make_page_audio(story, storage, book)
+    if all(paths):  # 한 쪽이라도 실패했으면 두지 않는다 — 다음에 다시 만든다
+        for p, path in zip(book.pages, paths, strict=True):
+            storage.save(f"{key}/page{p.page:02d}.mp3", storage.read(path))
+        storage.save(f"{key}/cast.json", json.dumps(story.voice_cast or {}, ensure_ascii=False).encode())
+    return paths
+
+
+def cached_audio(story: Story, storage, script: Script | None, key: str) -> str | None:
+    """짧은 저장본 이야기의 음성 하나. 위와 같다."""
+
+    cast = _read(storage, f"{key}/cast.json")
+    audio = _read(storage, f"{key}/full.mp3")
+    if cast is not None and audio:
+        log.info("story %s: 만들어 둔 음성을 다시 씁니다 (%s)", story.id, key)
+        story.voice_cast = json.loads(cast) or None
+        return storage.save(f"results/{story.id}.mp3", audio)
+    path = make_audio(story, storage, script)
+    if path:
+        storage.save(f"{key}/full.mp3", storage.read(path))
+        storage.save(f"{key}/cast.json", json.dumps(story.voice_cast or {}, ensure_ascii=False).encode())
+    return path
+
+
 def stored_script(payload: dict, name: str | None) -> Script | None:
     """짧은 카드 이야기 저장본 → 캐릭터 목소리 대본. 나레이션 판 저장본(글 하나)이면 None."""
 
@@ -532,7 +588,11 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     else write_story_book(story)
                 )
                 story.text = book.text()
-                audio = make_page_audio(story, storage, book)
+                audio = (
+                    cached_page_audio(story, storage, book, card_audio_key(stored, story))
+                    if stored is not None
+                    else make_page_audio(story, storage, book)
+                )
                 wait_for_motion_clips(db, character)
                 clips = make_page_clips(story, character, storage, book)
                 data = book.to_json()
@@ -550,7 +610,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
             elif stored is not None:
                 script = stored_script(stored.payload, name)
                 story.text = script_text(script) if script else stored.payload["text"]
-                story.audio_blob_path = make_audio(story, storage, script)
+                story.audio_blob_path = cached_audio(story, storage, script, card_audio_key(stored, story))
                 story.animation_blob_path = render_story(story, character, storage)
             else:
                 script = (

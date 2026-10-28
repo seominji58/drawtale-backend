@@ -187,15 +187,50 @@ def load(path: Path) -> None:
     print(f"{len(rows)}편을 draft 로 넣었습니다 ({datetime.now(UTC):%H:%M})")
 
 
+def apply_reviews(reviews: list[dict], reviewer: str = "review-page") -> dict[str, int]:
+    """검토 페이지 판정 → card_stories 상태. 판정 키는 「{길이}-{읽어주기}-{장소}{문제}{행동}{결과} 번호」(검토 페이지와 같다).
+
+    pass → approved (사람이 읽고 통과, 아이에게 나간다) · redo → rejected (다시 만들 것) · 빈 판정 → draft 로 둔다.
+    표에 없는 이야기(아직 --load 안 함)는 건너뛰고 센다.
+    """
+
+    from app.db.session import SessionLocal
+    from app.models.card_story import CardStory
+    from scripts.batch_card_stories import COMBO_BY_KEY
+
+    count = {"approved": 0, "rejected": 0, "draft": 0, "missing": 0}
+    with SessionLocal() as db:
+        for rv in reviews:
+            length, mode, ck = rv["key"].split("-")
+            c = COMBO_BY_KEY[ck]
+            row = db.query(CardStory).filter_by(
+                place=c.place, problem=c.problem, action=c.action, result=c.result, length=length, voice_mode=mode
+            ).one_or_none()
+            if row is None:
+                count["missing"] += 1
+                continue
+            status = {"pass": "approved", "redo": "rejected"}.get(rv.get("status") or "", "draft")
+            row.status = status
+            row.note = (rv.get("note") or None)
+            row.reviewed_by = reviewer if status != "draft" else None
+            row.reviewed_at = datetime.now(UTC) if status != "draft" else None
+            count[status] += 1
+        db.commit()
+    return count
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--pilot", action="store_true")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--load", type=Path)
+    ap.add_argument("--approve", type=Path, help="검토 페이지 판정 JSON (목록: key · status · note)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    if a.load:
+    if a.approve:
+        print(apply_reviews(json.loads(a.approve.read_text(encoding="utf-8"))))
+    elif a.load:
         load(a.load)
     elif a.pilot:
         jobs = [(c, length, "narration") for c in PILOT for length in cs.LENGTHS]

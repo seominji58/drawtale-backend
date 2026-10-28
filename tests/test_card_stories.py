@@ -73,3 +73,43 @@ def test_characters_short_fills_name(client, png_bytes):
     ))
     story = _story(client, _upload(client, png_bytes), voice_mode="characters", protagonist_name="민준")
     assert story["text"].startswith("민준은 숲에서 길을 잃었어요.")
+
+
+def test_review_verdicts_approve_or_reject():
+    """검토 페이지 판정 → 표 상태. 통과한 것만 아이에게 나간다."""
+
+    from scripts.make_card_stories import apply_reviews
+
+    _add(status="draft")  # 숲 / 길을 잃었어요 / 그 자리에서 기다렸어요 / 길을 찾았어요 — 키 5311
+    _add(status="draft", length="long", payload={"book": {}})
+    got = apply_reviews([
+        {"key": "short-narration-5311", "status": "pass"},
+        {"key": "long-narration-5311", "status": "redo", "note": "결말이 어색"},
+        {"key": "short-characters-5311", "status": "pass"},  # 표에 없다
+    ])
+    assert got == {"approved": 1, "rejected": 1, "draft": 0, "missing": 1}
+    with SessionLocal() as db:
+        st = {r.length: (r.status, r.note) for r in db.query(CardStory).all()}
+    assert st == {"short": ("approved", None), "long": ("rejected", "결말이 어색")}
+
+
+def test_stored_story_audio_is_made_once(client, png_bytes, monkeypatch):
+    """같은 저장본 · 같은 이름 · 같은 목소리면 음성은 한 번만 만든다 (13 1-1)."""
+
+    from app.services import jobs
+
+    calls = []
+
+    def fake_audio(story, storage, script=None):
+        calls.append(story.id)
+        return storage.save(f"results/{story.id}.mp3", b"mp3-" + story.text.encode())
+
+    monkeypatch.setattr(jobs, "make_audio", fake_audio)
+    _add()
+    cid = _upload(client, png_bytes)
+    a = _story(client, cid)
+    b = _story(client, cid)
+    assert len(calls) == 1  # 두 번째는 만들어 둔 것을 복사
+    assert a["audio_url"] and b["audio_url"] and a["audio_url"] != b["audio_url"]
+    c = _story(client, cid, voice_mode="characters", protagonist_name="민준")
+    assert c["status"] == "succeeded"  # 저장본이 없는 판은 그때 만든다
