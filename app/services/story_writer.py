@@ -227,6 +227,32 @@ class StoryWriter:
         )
         # 바로 앞 호출에서 실제로 답한 모델. 미리 만든 이야기에 남겨, 예비 모델로 넘어간 편을 골라낸다
         self.last_model = ""
+        # Claude 토큰 합계 (미리 만들기에서 비용을 재려고). 다시 쓴 시도도 들어간다
+        self.usage = {"input": 0, "output": 0}
+
+    def _count(self, res) -> None:
+        u = getattr(res, "usage", None)
+        if u is not None:
+            self.usage["input"] += getattr(u, "input_tokens", 0) or 0
+            self.usage["output"] += getattr(u, "output_tokens", 0) or 0
+
+    def claude_raw(self, system: str, user: str, json_mode: bool = False, effort: str = "low") -> str:
+        """Claude 한 번 — 예비 모델 없이. 미리 만들기의 고쳐 쓰기(card_variants)가 쓴다. 실패하면 예외."""
+
+        if self.claude is None:
+            raise RuntimeError("ANTHROPIC_API_KEY 가 없다")
+        s = get_settings()
+        res = self.claude.messages.create(
+            model=s.story_short_claude_model,
+            max_tokens=8000,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            output_config={"effort": effort},
+        )
+        self._count(res)
+        self.last_model = s.story_short_claude_model
+        text = "".join(b.text for b in res.content if b.type == "text").strip()
+        return json_part(text) if json_mode else text
 
     def short_completion(self, system: str, user: str, json_mode: bool, openai_tokens: int) -> str:
         """짧은 이야기 한 번. Claude 가 있으면 Claude, 실패하면 그 시도만 gpt-4o-mini."""
@@ -241,6 +267,7 @@ class StoryWriter:
                     messages=[{"role": "user", "content": user}],
                     output_config={"effort": s.story_short_effort},
                 )
+                self._count(res)
                 text = "".join(b.text for b in res.content if b.type == "text").strip()
                 if text:
                     self.last_model = s.story_short_claude_model
@@ -393,6 +420,7 @@ class StoryWriter:
                     messages=[{"role": "user", "content": user}],
                     output_config={"effort": s.story_book_effort},
                 )
+                self._count(res)
                 text = "".join(b.text for b in res.content if b.type == "text")
                 if res.stop_reason == "max_tokens":
                     log.info("Claude 대본이 토큰 한도에서 잘렸습니다")
