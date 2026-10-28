@@ -332,7 +332,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 | 필드 | 설정이 있을 때 | 없거나 실패할 때 |
 |---|---|---|
-| `text` | `OPENAI_API_KEY` 가 있으면 gpt-4o-mini 가 네 단계를 이어 쓴다. 앞뒤로 moderation 검사 | 템플릿 문장 「오늘 나는 …에 갔어요. 그런데 ….」 |
+| `text` | Claude Opus 5.5(`STORY_SHORT_PROVIDER=anthropic` · `STORY_SHORT_CLAUDE_MODEL` · `STORY_SHORT_EFFORT=low`, 2026-10-28)가 네 단계를 이어 쓴다. Claude 가 없거나 실패하면 그 시도만 gpt-4o-mini. 카드로만 고른 이야기는 미리 만든 저장본(2-5). 앞뒤로 moderation 검사 | 템플릿 문장 「오늘 나는 …에 갔어요. 그런데 ….」 |
 | `audio_url` | `text` 를 읽은 mp3. `TTS_PROVIDER=openai`(gpt-4o-mini-tts) 또는 `elevenlabs` | `null`. 음성만 빠지고 이야기는 성공 |
 | `animation_url` | AI 서버가 렌더한 MP4 (3-3). 동작은 `action` 으로 고른다 (4번 표 6) | 목 AI 면 원본 그림 URL |
 

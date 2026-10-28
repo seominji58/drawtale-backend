@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # 긴 이야기(length=long)의 쪽 수. 7~11 로 맞춘다 (services/book.py).
     # 쪽 수는 아직 정하지 않았다 (2026-10-12)
     story_pages: int = 8
-    # 긴 이야기 대본을 쓰는 모델. 네 문장 판은 story_writer.STORY_MODEL(gpt-4o-mini) 그대로.
+    # 긴 이야기 대본의 예비 모델 (Claude 가 실패할 때). 네 문장 판은 아래 story_short_* (Claude) 가 먼저다.
     # gpt-4o-mini 는 카드 뜻을 뒤집고(도와줬어요 → 도움을 요청) 쪽 배치를 어겨서 바꿨다
     # (2026-10-12 4편 비교)
     story_book_model: str = "gpt-5.4-mini"
@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     # 생각 정도: low | medium | high. medium 이 low 보다 첫 시도 실수가 적었다
     # (10편 시험, 편당 약 40초 · $0.10)
     story_book_effort: str = "medium"
+    # 짧은 이야기(네 문장 · 캐릭터 목소리 대본)도 Claude 로 쓴다 (2026-10-28 사용자 「전부 클로드로」).
+    # 시험에서 gpt-4o-mini 가 「어른을 불렀어요 → 친구가 생겼어요」를 「그 어른이 친구가 되었어요」로 바꾸는 등
+    # 카드 뜻을 비틀었다. "anthropic"(기본) | "openai". Claude 가 실패하면 그 시도만 gpt-4o-mini
+    story_short_provider: str = "anthropic"
+    story_short_claude_model: str = "claude-opus-5-5"
+    # 네 문장이라 생각을 적게 — 빠르고 싸다
+    story_short_effort: str = "low"
     tts_api_key: str = ""
     tts_timeout_seconds: float = 60
     # 이야기 음성 업체: "openai" (기본) | "elevenlabs". 청취 비교 후 팀이 고른다

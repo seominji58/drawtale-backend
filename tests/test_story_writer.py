@@ -92,3 +92,33 @@ def test_josa_follows_final_consonant():
     assert josa("콩", "이", "가") == "콩이"
     assert josa("Leo", "은", "는") == "Leo는"
     assert "하늘은 학교에 갔어요" in script_prompt("하늘")
+
+
+class _FakeClaude:
+    """messages.create 만 흉내 낸다. 받은 요청을 남긴다."""
+
+    def __init__(self, text):
+        self.calls = []
+        outer = self
+
+        class _Msgs:
+            def create(self, **kw):
+                outer.calls.append(kw)
+                block = type("B", (), {"type": "text", "text": text})()
+                return type("R", (), {"content": [block], "stop_reason": "end_turn"})()
+
+        self.messages = _Msgs()
+
+
+def test_short_story_is_written_by_claude(monkeypatch):
+    """짧은 이야기도 Claude 가 먼저 쓴다 (2026-10-28 「전부 클로드로」). 실제로 답한 모델을 남긴다."""
+
+    from app.services.story_writer import StoryWriter
+
+    w = StoryWriter("sk-test")
+    w.claude = _FakeClaude("나는 숲에 갔어요. 길을 잃었어요. 그 자리에서 기다렸어요. 길을 찾았어요.")
+    monkeypatch.setattr(w, "check_input", lambda text: None)
+    text = w.write("숲", "길을 잃었어요", "그 자리에서 기다렸어요", "길을 찾았어요")
+    assert text.startswith("나는 숲에 갔어요")
+    assert w.last_model.startswith("claude")
+    assert w.claude.calls[0]["output_config"] == {"effort": "low"}

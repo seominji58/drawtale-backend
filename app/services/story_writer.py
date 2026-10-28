@@ -30,6 +30,8 @@ SYSTEM_PROMPT = """너는 글을 막 배우기 시작한 아이를 위한 이야
 - 어려운 말, 비유, 속담은 쓰지 않는다.
 - 주인공은 "나"로 쓰고, 말투는 "~어요"로 끝낸다.
 - 아이가 고른 네 단계의 내용을 반드시 모두 담는다.
+- 아이가 고르지 않은 인물을 데려오지 않는다. 등장인물은 주인공과, 고른 카드에 꼭 필요한 인물만 쓴다
+  (「친구가 울고 있었어요」면 친구, 「어른을 불렀어요」면 어른). 엄마 · 친구와 함께 갔다고 쓰지 않는다.
 - 카드의 뜻을 바꾸거나 뒤집지 않는다. 「도와줬어요」는 주인공이 누군가를 도운 것이고,
   「숨었어요」는 주인공이 숨은 것이다. 주어는 주인공이다.
 - 아이 생각이 앞뒤가 안 맞아도 고치지 않는다.
@@ -223,6 +225,38 @@ class StoryWriter:
         self.claude = (
             anthropic.Anthropic(api_key=claude_key, timeout=claude_timeout) if claude_key else None
         )
+        # 바로 앞 호출에서 실제로 답한 모델. 미리 만든 이야기에 남겨, 예비 모델로 넘어간 편을 골라낸다
+        self.last_model = ""
+
+    def short_completion(self, system: str, user: str, json_mode: bool, openai_tokens: int) -> str:
+        """짧은 이야기 한 번. Claude 가 있으면 Claude, 실패하면 그 시도만 gpt-4o-mini."""
+
+        s = get_settings()
+        if self.claude is not None and s.story_short_provider == "anthropic":
+            try:
+                res = self.claude.messages.create(
+                    model=s.story_short_claude_model,
+                    max_tokens=4000,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                    output_config={"effort": s.story_short_effort},
+                )
+                text = "".join(b.text for b in res.content if b.type == "text").strip()
+                if text:
+                    self.last_model = s.story_short_claude_model
+                    return json_part(text) if json_mode else text
+                log.info("Claude 짧은 이야기가 비어 gpt-4o-mini 로 씁니다")
+            except anthropic.APIError:
+                log.exception("Claude 짧은 이야기 호출 실패, 이번 시도는 gpt-4o-mini 로 씁니다")
+        res = self.client.chat.completions.create(
+            model=STORY_MODEL,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.8,
+            max_tokens=openai_tokens,
+            **({"response_format": {"type": "json_object"}} if json_mode else {}),
+        )
+        self.last_model = STORY_MODEL
+        return (res.choices[0].message.content or "").strip()
 
     def check_input(self, text: str) -> None:
         """아이가 입력한 내용에 부적절한 표현이 있는지 확인한다. (무료)"""
@@ -241,16 +275,9 @@ class StoryWriter:
         )
         self.check_input(user_input)
 
-        res = self.client.chat.completions.create(
-            model=STORY_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_input},
-            ],
-            temperature=0.8,
-            max_tokens=300,
-        )
-        text = (res.choices[0].message.content or "").strip()
+        text = self.short_completion(SYSTEM_PROMPT, user_input, json_mode=False, openai_tokens=300)
+        # Claude 는 문장마다 줄을 바꿔 올 때가 있다. 화면 · 음성은 한 줄 글을 받는다
+        text = " ".join(text.split())
 
         if not text:
             raise OpenAIError("빈 응답")
@@ -276,18 +303,14 @@ class StoryWriter:
 
         # 네 문장을 넘기거나(다섯 문장) 대사를 빼먹을 때가 있다. S-10 카드가 문장 단위라
         # 맞을 때까지 세 번까지 쓴다. 끝내 안 맞으면 마지막 것을 쓴다
+        script = None
         for _ in range(3):
-            res = self.client.chat.completions.create(
-                model=STORY_MODEL,
-                messages=[
-                    {"role": "system", "content": script_prompt(name)},
-                    {"role": "user", "content": user_input},
-                ],
-                temperature=0.8,
-                max_tokens=600,
-                response_format={"type": "json_object"},
-            )
-            script = parse_script(res.choices[0].message.content or "", name)
+            raw = self.short_completion(script_prompt(name), user_input, json_mode=True, openai_tokens=600)
+            try:
+                script = parse_script(raw, name)
+            except ValueError as e:
+                log.info("대본 형식이 틀려 다시 씁니다: %s", e)
+                continue
             # 대사가 없으면 캐릭터 목소리 판의 의미가 없다 (대사를 안 넣은 적 있음)
             if count_sentences(script_text(script)) == SENTENCE_COUNT and has_dialogue(script):
                 break
@@ -297,6 +320,8 @@ class StoryWriter:
                 "있음" if has_dialogue(script) else "없음",
             )
 
+        if script is None:
+            raise ValueError("형식이 맞는 대본을 받지 못했다")  # 부르는 쪽이 나레이션 판으로 대신한다
         self.check_input(script_text(script))
         return script
 
@@ -371,6 +396,7 @@ class StoryWriter:
                 text = "".join(b.text for b in res.content if b.type == "text")
                 if res.stop_reason == "max_tokens":
                     log.info("Claude 대본이 토큰 한도에서 잘렸습니다")
+                self.last_model = s.story_book_claude_model
                 return json_part(text)
             except anthropic.APIError:
                 log.exception("Claude 대본 호출 실패, 이번 시도는 OpenAI 모델로 씁니다")
@@ -385,6 +411,7 @@ class StoryWriter:
             response_format={"type": "json_object"},
             **params,
         )
+        self.last_model = model
         return res.choices[0].message.content or ""
 
 

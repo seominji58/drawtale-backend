@@ -22,7 +22,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.services import card_stories as cs
 from app.services.book import OPENINGS, book_problems
-from app.services.story_writer import STORY_MODEL, get_story_writer
+from app.services.story_writer import get_story_writer
 
 OUT = Path("storage/card_stories")
 # 지시문을 고치면 올린다 — 저장본이 어느 지시문으로 만든 것인지 남긴다 (13 7장)
@@ -58,14 +58,15 @@ def make_one(writer, combo: cs.Combo, length: str, mode: str) -> dict:
         book = writer.write_book(choices, set(), s.story_pages, characters, name, opening=opening)
         problems = book_problems(book, choices, s.story_pages, characters)
         payload = cs.book_payload(book)
-        model = s.story_book_claude_model if writer.claude is not None and s.story_book_provider == "anthropic" else s.story_book_model
     elif characters:
         script = writer.write_script(combo.place, combo.problem, combo.action, combo.result, name)
         payload = cs.short_payload(sentences=[[(ln.speaker, ln.text, ln.emotion) for ln in parts] for parts in script.sentences], cast=script.cast)
-        model = STORY_MODEL
     else:
         payload = cs.short_payload(text=writer.write(combo.place, combo.problem, combo.action, combo.result))
-        model = STORY_MODEL
+    # 실제로 답한 모델 (마지막 시도). 미리 만드는 이야기는 전부 Claude 로 — 예비 모델로 넘어간 편은 버리고 다시 만든다
+    model = writer.last_model
+    if not model.startswith("claude"):
+        raise RuntimeError(f"Claude 가 아니라 {model or '틀 문장'} 으로 만들어졌다 — 버린다")
     return {
         "place": combo.place, "problem": combo.problem, "action": combo.action, "result": combo.result,
         "length": length, "voice_mode": mode, "payload": payload, "model": model,
