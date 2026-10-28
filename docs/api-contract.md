@@ -271,6 +271,14 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 네 문장이 아니거나 대사가 없으면 GPT 에게 세 번까지 다시 쓰게 한다.
 `eleven_v4` 는 speed 값을 무시한다 — 빠르기 · 감정은 문장 앞 태그(`[happy]` 등)로만 바뀐다 (2026-10-08 측정). 문장 수를 세는 기준은 따옴표 안의 마침표에서 끊지 않는다 (프론트 `sentences()` 와 같음).
 
+**미리 만든 카드 이야기 (2026-10-28, pt_docs 13 1-1)** — 네 칸이 모두 카드표(05 S-07, 2026-10-28 확정)의 글자 그대로이고
+`spoken` · `extras` 가 없으면, 서버는 **대본을 쓰지 않고** 표 `card_stories` 에서 같은 조합 · `length` · `voice_mode` 의
+**사람이 통과시킨(`approved`) 저장본**을 꺼낸다 (대본 0초). 음성 · 영상은 그 글로 지금처럼 만든다.
+저장본이 없거나 draft 면 지금처럼 그때 만든다. 캐릭터 목소리 판 저장본은 주인공 이름 자리가 `{이름}{조사:가}` 로 비어 있어
+`protagonist_name`(없으면 「토토」)을 끼우고 조사를 받침에 맞춘다. 응답 모양은 같다.
+만들기 · 넣기: `python -m scripts.make_card_stories --pilot | --all | --load <json>` (결과는 `storage/card_stories/`, git 밖).
+표: `card_stories` (migration `a9b0c1d2e3f4`), 코드 `app/services/card_stories.py`.
+
 > ⚠ **Frontend와 합의 필요:** 지금은 각 단계 값을 **자유 문자열(최대 50자)**로 받는다.
 > 선택지를 서버가 내려줄지(`GET /api/v1/story-options`), 코드 값(`school`, `fight` 등)으로 주고받을지 정해야 한다.
 

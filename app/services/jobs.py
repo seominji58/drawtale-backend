@@ -13,6 +13,7 @@ from app.models.mixins import utcnow
 from app.schemas.ai import RenderRequest
 from app.schemas.common import JobStatus, Joint
 from app.schemas.story import StoryLength, VoiceMode
+from app.services import card_stories
 from app.services.ai_client import get_ai_client
 from app.services.book import STAGES, Book, fallback_book
 from app.services.originals import delete_original
@@ -338,6 +339,18 @@ def write_story_book(story: Story) -> Book:
     return book
 
 
+def stored_script(payload: dict, name: str | None) -> Script | None:
+    """짧은 카드 이야기 저장본 → 캐릭터 목소리 대본. 나레이션 판 저장본(글 하나)이면 None."""
+
+    if "sentences" not in payload:
+        return None
+    return Script(
+        [[Line(s, card_stories.fill_name(t, name), e) for s, t, e in parts] for parts in payload["sentences"]],
+        dict(payload.get("cast") or {}),
+        name or "",
+    )
+
+
 def book_script(book: Book) -> Script:
     """음성용. 쪽 하나를 대본의 한 덩어리로 본다 — make_audio 가 그대로 읽는다."""
 
@@ -504,9 +517,20 @@ def run_story_job(job_id: uuid.UUID) -> None:
 
         storage = get_storage()
         try:
+            # 카드로만 고른 이야기는 사람이 읽고 통과시킨 저장본을 꺼낸다 — 대본 0초 (pt_docs 13 1-1)
+            stored = card_stories.find(db, story)
+            name = card_stories.hero_name(story)
+            if stored is not None:
+                log.info("story %s: 미리 만든 카드 이야기를 씁니다 (%s)", story.id, stored.id)
+                if name:
+                    story.protagonist_name = name
             if story.length == StoryLength.long:
                 # 긴 이야기: 쪽 단위 대본, 쪽마다 음성 · 동작 영상. 이야기 전체 MP3 는 만들지 않는다
-                book = write_story_book(story)
+                book = (
+                    card_stories.book_from_payload(stored.payload, name)
+                    if stored is not None
+                    else write_story_book(story)
+                )
                 story.text = book.text()
                 audio = make_page_audio(story, storage, book)
                 wait_for_motion_clips(db, character)
@@ -523,6 +547,11 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     story.animation_blob_path = character.upload_blob_path
                 else:
                     story.animation_blob_path = None
+            elif stored is not None:
+                script = stored_script(stored.payload, name)
+                story.text = script_text(script) if script else stored.payload["text"]
+                story.audio_blob_path = make_audio(story, storage, script)
+                story.animation_blob_path = render_story(story, character, storage)
             else:
                 script = (
                     write_story_script(story) if story.voice_mode == VoiceMode.characters else None
