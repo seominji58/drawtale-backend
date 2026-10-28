@@ -152,11 +152,42 @@ def process(results, rows, state) -> float:
     return spent
 
 
+def merge(path: Path) -> None:
+    """다른 곳(클라우드 세션 R 등)에서 같은 기준표로 판정한 결과를 합친다. 이야기가 그새 바뀌었으면(지문이 다르면) 버린다."""
+
+    rows = load_rows()
+    done = load_results()
+    added = stale = 0
+    with RESULTS.open("a", encoding="utf-8") as f:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            x = json.loads(line)
+            k = x["combo"]
+            if x.get("fingerprint") != fingerprint(k, rows):
+                stale += 1
+                continue
+            if done.get(k, {}).get("fingerprint") == x["fingerprint"]:
+                continue
+            c = COMBO_BY_KEY[k]
+            issues = [i for i in x.get("issues") or [] if isinstance(i, dict)]
+            r = {"combo": k, "place": c.place, "problem": c.problem, "action": c.action, "result": c.result,
+                 "verdict": "check" if issues else "pass", "issues": issues, "fingerprint": x["fingerprint"],
+                 "rubric": RUBRIC_VERSION, "source": str(path.name), "usage": {"input": 0, "output": 0}}
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            added += 1
+    log(f"합침 {added} · 이야기가 바뀌어 버림 {stale}")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--budget", type=float, required=True)
+    ap.add_argument("--budget", type=float, default=0)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--merge", type=Path, help="다른 곳에서 판정한 jsonl 을 합친다 (돈 들지 않음)")
     a = ap.parse_args()
+    if a.merge:
+        merge(a.merge)
+        return
     s = get_settings()
     if not s.anthropic_api_key:
         sys.exit("ANTHROPIC_API_KEY 가 없다")
