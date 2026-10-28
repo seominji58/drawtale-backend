@@ -82,18 +82,30 @@ def _choices(combo: cs.Combo) -> dict[str, str]:
     return {"place": combo.place, "problem": combo.problem, "action": combo.action, "result": combo.result}
 
 
-def long_characters(writer, combo: cs.Combo, base: dict, pages: int) -> tuple[dict, list[str]]:
-    """긴 판 · 캐릭터 목소리. 쪽 배치 · 동작 · 배경 계획은 기본판 것을 붙인다."""
+# ── 요청 만들기 / 결과 읽기 — 배치(scripts/batch_card_stories.py)와 바로 부르기가 같이 쓴다 ──
+def request(kind: tuple[str, str], combo: cs.Combo, base: dict) -> tuple[str, str, bool]:
+    """(system, user, json_mode). kind 는 (길이, 읽어주기)."""
 
     hero = cs.SLOT_NAME
-    system = CHARACTERS_SYSTEM.format(
-        hero=hero, narrator=NARRATOR, protagonist=PROTAGONIST,
-        types=", ".join(VOICE_TYPES), emotions=", ".join(EMOTION_TAGS),
-    )
-    bb = base["book"]
-    best, problems = None, ["받지 못함"]
-    for _ in range(TRIES):
-        raw = writer.claude_raw(system, _user(combo, base), json_mode=True)
+    if kind == ("long", "characters"):
+        system = CHARACTERS_SYSTEM.format(
+            hero=hero, narrator=NARRATOR, protagonist=PROTAGONIST,
+            types=", ".join(VOICE_TYPES), emotions=", ".join(EMOTION_TAGS),
+        )
+        return system, _user(combo, base), True
+    if kind == ("short", "narration"):
+        return SYSTEM_PROMPT + SHORT_RULE + KEEP, _user(combo, base), False
+    if kind == ("short", "characters"):
+        return script_prompt(hero) + SHORT_RULE + KEEP, _user(combo, base), True
+    raise KeyError(kind)
+
+
+def parse(kind: tuple[str, str], raw: str, combo: cs.Combo, base: dict, pages: int) -> tuple[dict, list[str], str]:
+    """결과 → (저장본, 문제, 검열할 글). 형식이 틀리면 ValueError."""
+
+    hero = cs.SLOT_NAME
+    if kind == ("long", "characters"):
+        bb = base["book"]
         try:
             got = json.loads(raw)
             lines = {int(p["page"]): p["lines"] for p in got["pages"]}
@@ -116,20 +128,48 @@ def long_characters(writer, combo: cs.Combo, base: dict, pages: int) -> tuple[di
                     ],
                 },
             }
-            book = parse_book(json.dumps(data, ensure_ascii=False), hero)
-        except (ValueError, KeyError, TypeError) as e:
-            log.info("캐릭터 판 형식이 틀려 다시 씁니다: %s", e)
-            continue
-        writer.check_input(book.text())
+        except (KeyError, TypeError, json.JSONDecodeError) as e:
+            raise ValueError(f"캐릭터 판 형식: {e}") from e
+        book = parse_book(json.dumps(data, ensure_ascii=False), hero)
         problems = book_problems(book, _choices(combo), pages, True)
         if hero not in book.text():
             problems.append("주인공 이름이 없다")
-        best = book
+        return cs.book_payload(book), problems, book.text()
+    if kind == ("short", "narration"):
+        text = " ".join(raw.split())
+        if not text:
+            raise ValueError("빈 글")
+        return cs.short_payload(text=text), _short_checks(text, combo), text
+    if kind == ("short", "characters"):
+        script = parse_script(raw, hero)
+        text = script_text(script)
+        problems = _short_checks(text, combo) + ([] if has_dialogue(script) else ["대사가 없다"])
+        payload = cs.short_payload(
+            sentences=[[(ln.speaker, ln.text, ln.emotion) for ln in parts] for parts in script.sentences], cast=script.cast
+        )
+        return payload, problems, text
+    raise KeyError(kind)
+
+
+def make(writer, kind: tuple[str, str], combo: cs.Combo, base: dict, pages: int) -> tuple[dict, list[str]]:
+    """바로 부르기 — 세 번까지 다시 쓴다."""
+
+    system, user, json_mode = request(kind, combo, base)
+    best = None
+    for _ in range(TRIES):
+        raw = writer.claude_raw(system, user, json_mode=json_mode)
+        try:
+            payload, problems, text = parse(kind, raw, combo, base, pages)
+        except ValueError as e:
+            log.info("%s 형식이 틀려 다시 씁니다: %s", kind, e)
+            continue
+        writer.check_input(text)
+        best = (payload, problems)
         if not problems:
             break
     if best is None:
-        raise ValueError("캐릭터 판을 받지 못했다")
-    return cs.book_payload(best), problems
+        raise ValueError(f"{kind} 를 받지 못했다")
+    return best
 
 
 def _short_checks(text: str, combo: cs.Combo) -> list[str]:
@@ -143,49 +183,6 @@ def _short_checks(text: str, combo: cs.Combo) -> list[str]:
     return out
 
 
-def short_narration(writer, combo: cs.Combo, base: dict) -> tuple[dict, list[str]]:
-    best, problems = "", ["받지 못함"]
-    for _ in range(TRIES):
-        text = " ".join(writer.claude_raw(SYSTEM_PROMPT + SHORT_RULE + KEEP, _user(combo, base)).split())
-        if not text:
-            continue
-        writer.check_input(text)
-        best, problems = text, _short_checks(text, combo)
-        if not problems:
-            break
-    if not best:
-        raise ValueError("짧은 판을 받지 못했다")
-    return cs.short_payload(text=best), problems
-
-
-def short_characters(writer, combo: cs.Combo, base: dict) -> tuple[dict, list[str]]:
-    hero = cs.SLOT_NAME
-    best, problems = None, ["받지 못함"]
-    for _ in range(TRIES):
-        raw = writer.claude_raw(script_prompt(hero) + SHORT_RULE + KEEP, _user(combo, base), json_mode=True)
-        try:
-            script = parse_script(raw, hero)
-        except ValueError as e:
-            log.info("짧은 캐릭터 판 형식이 틀려 다시 씁니다: %s", e)
-            continue
-        text = script_text(script)
-        writer.check_input(text)
-        best, problems = script, _short_checks(text, combo)
-        if not has_dialogue(script):
-            problems.append("대사가 없다")
-        if not problems:
-            break
-    if best is None:
-        raise ValueError("짧은 캐릭터 판을 받지 못했다")
-    return (
-        cs.short_payload(sentences=[[(ln.speaker, ln.text, ln.emotion) for ln in parts] for parts in best.sentences], cast=best.cast),
-        problems,
-    )
-
-
-VARIANTS = {
-    ("long", "characters"): lambda w, c, b, pages: long_characters(w, c, b, pages),
-    ("short", "narration"): lambda w, c, b, pages: short_narration(w, c, b),
-    ("short", "characters"): lambda w, c, b, pages: short_characters(w, c, b),
-}
+KINDS = (("long", "characters"), ("short", "narration"), ("short", "characters"))
+VARIANTS = {k: (lambda k: (lambda w, c, b, pages: make(w, k, c, b, pages)))(k) for k in KINDS}
 assert set(STAGES) == {"place", "problem", "action", "result"}

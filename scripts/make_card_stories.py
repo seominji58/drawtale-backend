@@ -171,7 +171,11 @@ def load(path: Path) -> None:
     from app.db.session import SessionLocal
     from app.models.card_story import CardStory
 
-    rows = read_rows(path)
+    # 같은 조합 · 판이 여러 번 적혔으면 뒤의 것 (배치로 고쳐 쓴 것이 뒤에 붙는다)
+    last = {}
+    for r in read_rows(path):
+        last[(r["place"], r["problem"], r["action"], r["result"], r["length"], r["voice_mode"])] = r
+    rows = list(last.values())
     with SessionLocal() as db:
         for r in rows:
             key = {k: r[k] for k in ("place", "problem", "action", "result", "length", "voice_mode")}
