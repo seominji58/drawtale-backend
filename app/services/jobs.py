@@ -104,21 +104,19 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
 # 그리는 경우가 많아, 팔을 내리거나 팔꿈치를 접는 원본 동작에서는 팔이 몸통에 눌려 뭉개진다.
 # dab·jumping_jacks·zombie 는 팔을 크게 접거나 내려서 쓰지 않는다.
 #
-# 키워드는 Frontend 행동 선택지(물어봤어요·달려갔어요·숨었어요·도와줬어요·기다렸어요·
-# 크게 불렀어요)와 이전 예시 문구에서 왔다. 활발한 행동은 뛰기, 나머지는 손 흔들기.
+# 키워드는 행동 카드 16장(pt_docs 05 S-07 「행동 카드 16장」, 2026-10-28 확정 · 프론트 choices.ts)에서 왔다.
+# 카드의 동작 열은 손 흔들기 · 걷기 · 뛰기 · 대기 · 사라지기 다섯인데, 순화 동작 파일은 뛰기 · 손 흔들기 둘뿐이라
+# 뛰기 카드(「달려」)만 뛰기로 가고 나머지는 손 흔들기(기본)로 간다. 걷기 · 대기 동작이 생기면 여기에 더한다.
 ACTION_MOTIONS: dict[str, str] = {
     "달려": "jumping_gentle",
     "뛰": "jumping_gentle",
     "점프": "jumping_gentle",
     "춤": "jumping_gentle",
     "운동": "jumping_gentle",
-    # 문제별 행동 카드 (프론트 choices.ts ACTIONS_BY_PROBLEM, 2026-10-27 로컬 목업)
-    "놀았": "jumping_gentle",
-    "노래": "jumping_gentle",
-    "열매": "jumping_gentle",
+    "흔들": "wave_hello_gentle",
+    "불렀": "wave_hello_gentle",
     "물어": "wave_hello_gentle",
     "도와": "wave_hello_gentle",
-    "불렀": "wave_hello_gentle",
     "인사": "wave_hello_gentle",
     "사과": "wave_hello_gentle",
 }
