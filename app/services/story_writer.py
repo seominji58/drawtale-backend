@@ -308,6 +308,7 @@ class StoryWriter:
         characters: bool,
         name: str | None = None,
         extras: dict[str, str] | None = None,
+        opening: str | None = None,
     ) -> Book:
         """긴 이야기. 네 칸(과 아이가 말로 덧붙인 말)을 뼈대로 쪽 단위 대본을 만든다.
 
@@ -318,7 +319,7 @@ class StoryWriter:
         """
 
         extras = {k: v for k, v in (extras or {}).items() if v}
-        user_input = book_user_message(choices, spoken, extras)
+        user_input = book_user_message(choices, spoken, extras, opening)
         self.check_input(user_input)
         if name:
             self.check_input(name)

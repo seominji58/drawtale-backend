@@ -9,7 +9,7 @@ from app.services.jobs import DEFAULT_MOTION, motion_for, render_with_fallback
 @pytest.mark.parametrize(
     "action,motion",
     [
-        # 행동 카드 16장 (pt_docs 05 S-07, 2026-10-28). 뛰기 카드만 뛰기, 나머지는 손 흔들기
+        # 행동 카드 16장 (pt_docs 05 S-07, 2026-10-28 4차). 뛰기 카드만 뛰기, 나머지는 손 흔들기
         ("툭툭 털고 달려갔어요", "jumping_gentle"),
         ("어른을 불렀어요", "wave_hello_gentle"),
         ("천천히 다시 걸었어요", "wave_hello_gentle"),
@@ -20,8 +20,8 @@ from app.services.jobs import DEFAULT_MOTION, motion_for, render_with_fallback
         ("옆에서 기다려 줬어요", "wave_hello_gentle"),
         ("그 자리에서 기다렸어요", "wave_hello_gentle"),
         ("어른에게 물어봤어요", "wave_hello_gentle"),
-        ("길을 찾아 나섰어요", "wave_hello_gentle"),
-        ("큰 길로 달려갔어요", "jumping_gentle"),
+        ("주위를 살피며 걸었어요", "wave_hello_gentle"),
+        ("표지판으로 달려갔어요", "jumping_gentle"),
         ("숨었어요", "wave_hello_gentle"),
         ("밝은 곳으로 달려갔어요", "jumping_gentle"),
         ("살금살금 걸어갔어요", "wave_hello_gentle"),

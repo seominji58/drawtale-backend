@@ -21,22 +21,22 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.services import card_stories as cs
-from app.services.book import book_problems
+from app.services.book import OPENINGS, book_problems
 from app.services.story_writer import STORY_MODEL, get_story_writer
 
 OUT = Path("storage/card_stories")
 # 지시문을 고치면 올린다 — 저장본이 어느 지시문으로 만든 것인지 남긴다 (13 7장)
-PROMPT_VERSION = "2026-10-28"
+PROMPT_VERSION = "2026-10-28c"  # b: 햇살 첫 문장 · 교훈 끝말 없앰, 조합마다 시작 방식 / c: 첫 쪽 주인공만 · 시간대 · 가려던 곳 · 손 흔들며 끝맺기 금지, 카드 4차
 
 # 시험 8편: 문제마다 2편, 장소 · 행동 · 결과가 겹치지 않게. 안전 수칙 카드(그 자리에서 기다렸어요 · 어른에게 물어봤어요)와
 # 「숨었어요」(주어 지키기), 「모두 기뻐했어요」를 넣었다
 PILOT = [
-    cs.Combo("집", "넘어졌어요", "툭툭 털고 달려갔어요", "다시 씩씩해졌어요"),
-    cs.Combo("우주", "넘어졌어요", "어른을 불렀어요", "웃음이 났어요"),
-    cs.Combo("놀이터", "친구가 울고 있었어요", "다가가서 도와줬어요", "친구가 웃었어요"),
-    cs.Combo("바다", "친구가 울고 있었어요", "옆에서 기다려 줬어요", "모두 기뻐했어요"),
+    cs.Combo("집", "넘어졌어요", "툭툭 털고 달려갔어요", "가려던 곳까지 갔어요"),
+    cs.Combo("우주", "넘어졌어요", "어른을 불렀어요", "친구가 생겼어요"),
+    cs.Combo("놀이터", "친구가 울고 있었어요", "다가가서 도와줬어요", "친구 눈물이 그쳤어요"),
+    cs.Combo("바다", "친구가 울고 있었어요", "옆에서 기다려 줬어요", "고맙다는 말을 들었어요"),
     cs.Combo("숲", "길을 잃었어요", "그 자리에서 기다렸어요", "길을 찾았어요"),
-    cs.Combo("마을", "길을 잃었어요", "어른에게 물어봤어요", "무사히 돌아왔어요"),
+    cs.Combo("마을", "길을 잃었어요", "표지판으로 달려갔어요", "어른이 데려다 줬어요"),
     cs.Combo("동굴", "어두워졌어요", "숨었어요", "해가 떴어요"),
     cs.Combo("학교", "어두워졌어요", "살금살금 걸어갔어요", "잠이 들었어요"),
 ]
@@ -51,8 +51,11 @@ def make_one(writer, combo: cs.Combo, length: str, mode: str) -> dict:
     name = cs.SLOT_NAME if characters else None
     t = time.time()
     problems: list[str] = []
+    opening = ""
     if length == "long":
-        book = writer.write_book(choices, set(), s.story_pages, characters, name)
+        # 조합마다 정해진 시작 방식 — 다시 만들어도 같은 조합은 같은 방식이다
+        opening = OPENINGS[cs.combos().index(combo) % len(OPENINGS)]
+        book = writer.write_book(choices, set(), s.story_pages, characters, name, opening=opening)
         problems = book_problems(book, choices, s.story_pages, characters)
         payload = cs.book_payload(book)
         model = s.story_book_claude_model if writer.claude is not None and s.story_book_provider == "anthropic" else s.story_book_model
@@ -66,7 +69,7 @@ def make_one(writer, combo: cs.Combo, length: str, mode: str) -> dict:
     return {
         "place": combo.place, "problem": combo.problem, "action": combo.action, "result": combo.result,
         "length": length, "voice_mode": mode, "payload": payload, "model": model,
-        "prompt_version": PROMPT_VERSION, "problems": problems, "seconds": round(time.time() - t, 1),
+        "prompt_version": PROMPT_VERSION, "problems": problems, "opening": opening if length == "long" else "", "seconds": round(time.time() - t, 1),
     }
 
 
