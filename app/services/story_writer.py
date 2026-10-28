@@ -208,8 +208,16 @@ def has_dialogue(script: Script) -> bool:
 def json_part(text: str) -> str:
     """모델 답에서 JSON 부분만. Claude 는 JSON 모드가 없어 앞뒤에 말이나 ``` 를 붙일 때가 있다."""
 
-    a, b = text.find("{"), text.rfind("}")
-    return text[a : b + 1] if a != -1 and b > a else text
+    a = text.find("{")
+    if a == -1:
+        return text
+    # 첫 JSON 하나만. 뒤에 설명이나 두 번째 JSON 이 붙어 「Extra data」로 깨진 적이 있다 (2026-10-28 배치)
+    try:
+        _, end = json.JSONDecoder().raw_decode(text[a:])
+        return text[a : a + end]
+    except json.JSONDecodeError:
+        b = text.rfind("}")
+        return text[a : b + 1] if b > a else text
 
 
 class StoryWriter:

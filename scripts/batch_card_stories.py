@@ -149,7 +149,9 @@ def variant_request(kind: tuple[str, str], c: cs.Combo, base: dict) -> dict:
 def spot_missing(c: cs.Combo, first_page: str) -> bool:
     """첫 쪽에 정해 준 자리가 없나. 「욕실 앞」 → 「욕실」, 「버섯이 난 풀밭」 → 「풀밭」 중 하나라도 있으면 된다."""
 
-    words = [w.rstrip("이가") for w in cs.spot_for(c).split() if len(w) >= 2 and w not in ("앞", "옆", "아래", "사이")]
+    # 「내 방」 · 「별 사이」 · 「달 위」처럼 한 글자 낱말도 본다 (두 글자만 보다가 늘 「없다」로 판정했다, 2026-10-28)
+    fillers = {"앞", "옆", "아래", "위", "사이", "곳", "내", "난", "이", "가"}
+    words = [w.rstrip("이가") or w for w in cs.spot_for(c).split() if w not in fillers]
     return not any(w and w in first_page for w in words)
 
 
@@ -231,24 +233,96 @@ def estimate(ids) -> float:
 
 
 # ── 배치 ──
-def run_batch(client, reqs: dict, state: dict) -> list:
+def save_state(state: dict) -> None:
+    STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def submit(client, reqs: dict, state: dict) -> str:
     batch = client.messages.batches.create(requests=[{"custom_id": k, "params": v} for k, v in reqs.items()])
     state.setdefault("batches", []).append(batch.id)
-    STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    save_state(state)
     log(f"배치 {batch.id} 보냄 · {len(reqs)}건")
+    return batch.id
+
+
+def wait(client, batch_id: str) -> list:
+    """배치가 끝날 때까지 기다렸다가 결과를 받는다. 노트북이 꺼져도 배치는 서버에서 돈다 — 다시 켜면 여기서 이어 받는다."""
+
     while True:
-        b = client.messages.batches.retrieve(batch.id)
+        b = client.messages.batches.retrieve(batch_id)
         if b.processing_status == "ended":
             break
         rc = b.request_counts
-        log(f"  처리 중 · 끝남 {rc.succeeded + rc.errored} / {len(reqs)}")
+        log(f"  {batch_id} 처리 중 · 끝남 {rc.succeeded + rc.errored} / {rc.processing + rc.succeeded + rc.errored + rc.canceled + rc.expired}")
         time.sleep(60)
-    return list(client.messages.batches.results(batch.id))
+    return list(client.messages.batches.results(batch_id))
+
+
+def already_saved(rows: dict, code: str, k: str) -> bool:
+    """이 요청의 결과가 이미 저장됐나 — 같은 배치를 두 번 읽어도 두 번 저장하지 않는다."""
+
+    b = rows.get((k, "long", "narration"))
+    if code in ("base", "fix"):
+        return b is not None and b["prompt_version"] == PROMPT_VERSION
+    d = rows.get((k, *CODE_KIND[code]))
+    return b is not None and d is not None and d.get("base_sig") == sig(b["payload"])
+
+
+def process(results: list, state: dict, writer) -> tuple[int, int, float]:
+    """배치 결과를 검사하고 저장한다. (저장, 다시/실패, 쓴 돈)."""
+
+    s = get_settings()
+    rows = load_rows()
+    ok = bad = 0
+    spent = 0.0
+    for res in results:
+        cid = res.custom_id
+        code, k = cid.split("-", 1)
+        c = COMBO_BY_KEY[k]
+        if res.result.type != "succeeded":
+            state["failed"][cid] = state["failed"].get(cid, 0) + 1
+            bad += 1
+            continue
+        msg = res.result.message
+        u = {"input": msg.usage.input_tokens, "output": msg.usage.output_tokens}
+        spent += u["input"] * PRICE_IN + u["output"] * PRICE_OUT
+        if already_saved(rows, code, k):
+            continue
+        text = "".join(b.text for b in msg.content if b.type == "text")
+        try:
+            if code == "base":
+                payload, problems = read_base(c, text, writer)
+                r = row(c, "long", "narration", payload, problems, u, opening=OPENINGS[cs.combos().index(c) % len(OPENINGS)], spot=cs.spot_for(c))
+            elif code == "fix":
+                old = rows[(k, "long", "narration")]["payload"]
+                payload, problems = read_fix(c, text, old, writer)
+                r = row(c, "long", "narration", payload, problems, u, fixed=True, spot=cs.spot_for(c))
+            else:
+                kind = CODE_KIND[code]
+                base = rows[(k, "long", "narration")]["payload"]
+                payload, problems, check = cv.parse(kind, json_part(text) if kind != ("short", "narration") else text, c, base, s.story_pages)
+                problems = problems + moderate(writer, check)
+                r = row(c, *kind, payload, problems, u, derived_from="long-narration", base_sig=sig(base))
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
+            state["failed"][cid] = state["failed"].get(cid, 0) + 1
+            bad += 1
+            log(f"  형식 오류 {cid}: {e}")
+            continue
+        if r["problems"]:
+            state["failed"][cid] = state["failed"].get(cid, 0) + 1
+            bad += 1
+            log(f"  검사 걸림 {cid}: {'; '.join(r['problems'])}")
+            if state["failed"][cid] < 3:
+                continue  # 다음 회차에 다시 보낸다
+        append(r)
+        rows[(k, r["length"], r["voice_mode"])] = r
+        ok += 1
+    return ok, bad, spent
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--budget", type=float, required=True, help="이번 실행에서 쓸 최대 달러")
+    ap.add_argument("--budget", type=float, required=True, help="이번 실행에서 새로 보낼 요청에 쓸 최대 달러")
     ap.add_argument("--limit", type=int, default=0, help="시험: 단계마다 이 수만 보낸다")
     ap.add_argument("--only", nargs="*", default=[], help="시험: 이 종류만 (base fix lc sn sc)")
     a = ap.parse_args()
@@ -259,7 +333,33 @@ def main() -> None:
     writer = get_story_writer()  # 검열(OpenAI moderation)
     state = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
     state.setdefault("failed", {})
+    state.setdefault("processed", [])
     spent = 0.0
+
+    # 고친 자리 검사로 다시 판정: 저장된 기본판 중 「자리가 없다」로만 걸렸던 것은 지금 기준으로 다시 본다
+    if not state.get("recheck_1028"):
+        fixed_rows = 0
+        for (k, length, mode), r in load_rows().items():
+            if (length, mode) != ("long", "narration") or not r.get("problems"):
+                continue
+            rest = [p for p in r["problems"] if "자리" not in p]
+            if rest != r["problems"] and not spot_missing(COMBO_BY_KEY[k], r["payload"]["book"]["pages"][0]["text"]):
+                append({**r, "problems": rest})
+                fixed_rows += 1
+        for cid in list(state["failed"]):
+            state["failed"].pop(cid)  # 자리 · 형식 오류로 쌓인 횟수를 지우고 다시 기회를 준다
+        state["recheck_1028"] = True
+        save_state(state)
+        log(f"고친 자리 검사로 {fixed_rows}편을 다시 판정했다 · 실패 횟수 초기화")
+
+    # 먼저: 보내 놓고 아직 읽지 않은 배치 (노트북이 꺼졌던 사이 서버에서 끝났을 수 있다). 새로 보내지 않고 받아 온다
+    for bid in [b for b in state.get("batches", []) if b not in state["processed"]]:
+        log(f"전에 보낸 배치 {bid} 를 이어 받는다")
+        ok, bad, cost = process(wait(client, bid), state, writer)
+        state["processed"].append(bid)
+        state["spent"] = state.get("spent", 0) + cost
+        save_state(state)
+        log(f"  저장 {ok} · 다시/실패 {bad} · ${cost:.2f} (이 배치는 이번 예산에 넣지 않는다 — 이미 낸 돈)")
 
     for round_no in range(1, 8):
         rows = load_rows()
@@ -294,49 +394,13 @@ def main() -> None:
             log(f"예산 때문에 {len(reqs)}건 중 {len(fit)}건만 보낸다")
         reqs = fit
         log(f"{round_no}회차 · {'1단계(기본판)' if stage1 else '2단계(나머지 판)'} · {len(reqs)}건 · 예상 ${est:.2f}")
-        results = run_batch(client, reqs, state)
-        ok = bad = 0
-        for res in results:
-            cid = res.custom_id
-            code, k = cid.split("-", 1)
-            c = COMBO_BY_KEY[k]
-            if res.result.type != "succeeded":
-                state["failed"][cid] = state["failed"].get(cid, 0) + 1
-                bad += 1
-                continue
-            msg = res.result.message
-            u = {"input": msg.usage.input_tokens, "output": msg.usage.output_tokens}
-            spent += u["input"] * PRICE_IN + u["output"] * PRICE_OUT
-            text = "".join(b.text for b in msg.content if b.type == "text")
-            try:
-                if code == "base":
-                    payload, problems = read_base(c, text, writer)
-                    r = row(c, "long", "narration", payload, problems, u, opening=OPENINGS[cs.combos().index(c) % len(OPENINGS)], spot=cs.spot_for(c))
-                elif code == "fix":
-                    old = rows[(k, "long", "narration")]["payload"]
-                    payload, problems = read_fix(c, text, old, writer)
-                    r = row(c, "long", "narration", payload, problems, u, fixed=True, spot=cs.spot_for(c))
-                else:
-                    kind = CODE_KIND[code]
-                    base = rows[(k, "long", "narration")]["payload"]
-                    payload, problems, check = cv.parse(kind, json_part(text) if kind != ("short", "narration") else text, c, base, s.story_pages)
-                    problems = problems + moderate(writer, check)
-                    r = row(c, *kind, payload, problems, u, derived_from="long-narration", base_sig=sig(base))
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
-                state["failed"][cid] = state["failed"].get(cid, 0) + 1
-                bad += 1
-                log(f"  형식 오류 {cid}: {e}")
-                continue
-            if r["problems"]:
-                state["failed"][cid] = state["failed"].get(cid, 0) + 1
-                bad += 1
-                log(f"  검사 걸림 {cid}: {'; '.join(r['problems'])}")
-                if state["failed"][cid] < 3:
-                    continue  # 다음 회차에 다시 보낸다
-            append(r)
-            ok += 1
-        STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-        log(f"{round_no}회차 끝 · 저장 {ok} · 다시/실패 {bad} · 이번 실행 누적 ${spent:.2f}")
+        bid = submit(client, reqs, state)
+        ok, bad, cost = process(wait(client, bid), state, writer)
+        spent += cost
+        state["processed"].append(bid)
+        state["spent"] = state.get("spent", 0) + cost
+        save_state(state)
+        log(f"{round_no}회차 끝 · 저장 {ok} · 다시/실패 {bad} · 이번 실행 누적 ${spent:.2f} · 지금까지 전체 ${state['spent']:.2f}")
         if a.limit:
             break
     log(f"이번 실행에서 쓴 돈 약 ${spent:.2f} (배치 단가)")
