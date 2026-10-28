@@ -36,7 +36,10 @@ from app.services.voices import NARRATOR
 OUT = Path("storage/card_stories")
 ROWS = OUT / "all.jsonl"
 STATE = OUT / "batch_state.json"
-PROMPT_VERSION = "2026-10-28e"  # e: 첫 쪽 자리 돌리기 · 제목 · 이름 밝힌 어른, 배치 (넘어짐을 가볍게 — 다시 만든 편에만)
+PROMPT_VERSION = "2026-10-28f"  # f: 「어두워졌어요」에서 혼자 밤에 남지 않기 / e: 첫 쪽 자리 돌리기 · 제목 · 이름 밝힌 어른, 배치
+FIX_BEFORE = "2026-10-28e"  # 이보다 앞선 기본판만 첫 쪽을 고친다 (e 는 이미 첫 쪽 자리를 돌려 받았다)
+# f 에서 다시 쓰는 기본판 — AI 검토가 「혼자 · 밤」을 짚은 문제 (46조합 중 39). 같은 문제 128조합을 모두 다시 쓴다
+REWRITE_PROBLEMS = {"어두워졌어요"}
 PRICE_IN, PRICE_OUT = 2 / 1e6, 10 / 1e6
 # 한 요청 평균 토큰 (2026-10-28 실측) — 보내기 전에 예산을 넘는지 본다
 AVG = {"base": (5200, 5600), "fix": (3500, 1200), "lc": (1800, 1650), "sn": (1800, 700), "sc": (2600, 1350)}
@@ -222,7 +225,11 @@ def plan(rows: dict, failed: dict) -> tuple[dict, dict]:
             if failed.get(f"base-{k}", 0) < 3:
                 stage1[f"base-{k}"] = base_request(c)
             continue
-        if b["prompt_version"] < PROMPT_VERSION:
+        if b["prompt_version"] < PROMPT_VERSION and c.problem in REWRITE_PROBLEMS:
+            if failed.get(f"base-{k}", 0) < 3:
+                stage1[f"base-{k}"] = base_request(c)
+            continue
+        if b["prompt_version"] < FIX_BEFORE:
             code = "base" if needs_full(b) else "fix"
             if failed.get(f"{code}-{k}", 0) < 3:
                 stage1[f"{code}-{k}"] = base_request(c) if code == "base" else fix_request(c, b["payload"])
@@ -273,8 +280,10 @@ def already_saved(rows: dict, code: str, k: str) -> bool:
         return False
     if code in KIND_CODE.values() and flagged(rows.get((k, *CODE_KIND[code]))):
         return False
-    if code in ("base", "fix"):
+    if code == "base":
         return b is not None and b["prompt_version"] == PROMPT_VERSION
+    if code == "fix":
+        return b is not None and b["prompt_version"] >= FIX_BEFORE
     d = rows.get((k, *CODE_KIND[code]))
     return b is not None and d is not None and d.get("base_sig") == sig(b["payload"])
 

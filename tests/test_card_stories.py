@@ -113,3 +113,12 @@ def test_stored_story_audio_is_made_once(client, png_bytes, monkeypatch):
     assert a["audio_url"] and b["audio_url"] and a["audio_url"] != b["audio_url"]
     c = _story(client, cid, voice_mode="characters", protagonist_name="민준")
     assert c["status"] == "succeeded"  # 저장본이 없는 판은 그때 만든다
+
+
+def test_opening_style_reaches_the_message():
+    """조합마다 주는 첫 쪽 시작 방식이 메시지에 실제로 들어간다 (빠져 있던 것을 바로잡음, 2026-10-28)."""
+
+    from app.services.book import OPENINGS, book_user_message
+
+    msg = book_user_message({"place": "숲", "problem": "길을 잃었어요", "action": "a", "result": "b"}, set(), None, OPENINGS[0])
+    assert msg.endswith(f"첫 쪽 시작 방식: {OPENINGS[0]}")
