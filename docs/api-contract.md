@@ -278,6 +278,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 `protagonist_name`(없으면 「토토」)을 끼우고 조사를 받침에 맞춘다. 응답 모양은 같다.
 만들기 · 넣기: `python -m scripts.make_card_stories --pilot | --all | --load <json>` (결과는 `storage/card_stories/`, git 밖).
 표: `card_stories` (migration `a9b0c1d2e3f4`), 코드 `app/services/card_stories.py`.
+저장본 이야기의 음성은 (이야기 내용 · 이름 · 읽어주기 · 주인공 목소리 · 음성 업체)마다 처음 한 번 만들어 저장소 `card_audio/` 에 두고, 다음부터는 이 이야기 폴더로 복사해 쓴다 (응답의 `audio_url` · 쪽 `audio_url` 모양은 같다).
 
 > ⚠ **Frontend와 합의 필요:** 지금은 각 단계 값을 **자유 문자열(최대 50자)**로 받는다.
 > 선택지를 서버가 내려줄지(`GET /api/v1/story-options`), 코드 값(`school`, `fight` 등)으로 주고받을지 정해야 한다.
