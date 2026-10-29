@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import hashlib
 import json
 import re
@@ -42,7 +43,8 @@ FIX_BEFORE = "2026-10-28e"  # 이보다 앞선 기본판만 첫 쪽을 고친다
 REWRITE_PROBLEMS = {"어두워졌어요"}
 REWRITE_BEFORE = "2026-10-28f"  # 이보다 앞선 「어두워졌어요」 기본판만 다시 쓴다
 # AI 검토가 짚은 것을 고쳐 쓰는 회차 (scripts/fix_card_stories.py). 고친 줄에 fixed_round 로 남는다
-FIX_ROUND = "2026-10-29"
+# 같은 편을 한 회차에 두 번 고치면 두 번째가 「이미 저장됨」으로 건너뛰어진다(10/29 안전 고침 9편) — 회차마다 새 이름을 준다
+FIX_ROUND = os.environ.get("CARD_FIX_ROUND", "2026-10-29")
 FIX_CODES = {"fixbase": ("long", "narration"), "fixlc": ("long", "characters"), "fixsn": ("short", "narration"), "fixsc": ("short", "characters")}
 PRICE_IN, PRICE_OUT = 2 / 1e6, 10 / 1e6
 # 한 요청 평균 토큰 (2026-10-28 실측) — 보내기 전에 예산을 넘는지 본다
