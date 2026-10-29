@@ -33,6 +33,7 @@ copy .env.example .env
 #   a) Azure 공유 DB: .env의 DATABASE_URL을 전달받은 drawtale_dev 주소로 변경
 #   b) 로컬 DB: docker compose up -d db   (Docker Desktop 필요, 포트 5433)
 alembic upgrade head
+python -m app.seed.card_stories   # 미리 만든 카드 이야기 2,048편 넣기 (몇 번 돌려도 같다)
 
 # 4. 서버 실행
 uvicorn app.main:app --reload
@@ -92,6 +93,8 @@ pytest                                              # 테스트
 ruff check .                                        # 린트
 alembic revision --autogenerate -m "add character"  # migration 생성 (검토 후 커밋)
 alembic upgrade head                                # migration 적용
+python -m app.seed.card_stories                     # 카드 이야기 씨앗 → DB (app/seed/card_stories.jsonl.gz)
+python -m app.seed.card_stories --export            # DB 의 approved → 씨앗 (이야기를 고쳤을 때만, 커밋)
 ```
 
 ## 규칙

@@ -83,6 +83,10 @@ VM 없이 **이 compose 파일 그대로** 로컬에서 `ai` · `torchserve` 를
 **마이그레이션은 공용 DB 를 건드린다.** `backend` 컨테이너가 뜰 때
 `alembic upgrade head` 를 돌리므로, **올리기 전에 팀에 알린다.**
 
+**카드 이야기 씨앗.** 마이그레이션 뒤 한 번 넣는다 (몇 번 돌려도 같다):
+`docker compose -f docker-compose.prod.yml exec backend python -m app.seed.card_stories`
+— 저장소의 `app/seed/card_stories.jsonl.gz`(통과한 2,048편)를 `card_stories` 표에 넣는다.
+
 ## 아직 정하지 않은 것
 
 | 무엇 | |
