@@ -162,12 +162,24 @@ def spot_missing(c: cs.Combo, first_page: str) -> bool:
     return not any(w and w in first_page for w in words)
 
 
+# 미리 만드는 카드 이야기에만 쓰는 내용 검사 기준 (2026-10-29 사용자 결정 「나」).
+# OpenAI 검사가 「넘어졌어요」 카드의 가벼운 넘어짐(엉덩방아 한 쪽)에도 violence 0.4 안팎을 줘서, 같은 글이 걸렸다 안 걸렸다 했다.
+# 미리 만든 글은 AI 검토 · 사람 표본 검토를 또 거치므로 **violence 만 걸렸고 점수가 이보다 낮으면** 통과시킨다.
+# 다른 항목이 하나라도 걸리면 그대로 막는다. 그때 만드는 이야기(아이 말 · 보호자 입력)는 StoryWriter.check_input 그대로 엄격하다.
+PREGEN_VIOLENCE_MAX = 0.5
+
+
 def moderate(writer, text: str) -> list[str]:
-    try:
-        writer.check_input(text)
+    from app.services.story_writer import MODERATION_MODEL
+
+    res = writer.client.moderations.create(model=MODERATION_MODEL, input=text).results[0]
+    if not res.flagged:
         return []
-    except StoryBlocked as e:
-        return [f"내용 검사에 걸림 ({e})"]
+    flagged = {k for k, v in res.categories.model_dump().items() if v}
+    score = res.category_scores.violence
+    if flagged == {"violence"} and score < PREGEN_VIOLENCE_MAX:
+        return []  # 미리 만든 글 기준 안 (위 설명)
+    return [f"내용 검사에 걸림 ({', '.join(sorted(flagged))}{f' {score:.2f}' if 'violence' in flagged else ''})"]
 
 
 def read_base(c: cs.Combo, text: str, writer) -> tuple[dict, list[str]]:
