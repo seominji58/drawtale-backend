@@ -112,6 +112,12 @@ def templatize(text: str) -> str:
     return _SLOT.sub(lambda m: "{이름}" + (f"{{조사:{m.group(1)}}}" if m.group(1) else ""), text)
 
 
+def untemplatize(text: str) -> str:
+    """`{이름}{조사:가}` → 「라라가」. 모델이 이름 자리 표시를 그대로 따라 쓴 답을 읽을 때 (2026-10-29)."""
+
+    return _TOKEN.sub(lambda m: SLOT_NAME + (m.group(1) or ""), text)
+
+
 def has_final(word: str) -> bool:
     """마지막 글자에 받침이 있나. 한글이 아니면 없다고 본다."""
 

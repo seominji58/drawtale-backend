@@ -105,6 +105,7 @@ def parse(kind: tuple[str, str], raw: str, combo: cs.Combo, base: dict, pages: i
     """결과 → (저장본, 문제, 검열할 글). 형식이 틀리면 ValueError."""
 
     hero = cs.SLOT_NAME
+    raw = cs.untemplatize(raw)  # 이름 자리 표시를 따라 쓴 답도 읽는다
     if kind == ("long", "characters"):
         bb = base["book"]
         try:

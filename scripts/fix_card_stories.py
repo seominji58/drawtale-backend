@@ -69,6 +69,11 @@ def api_book(payload: dict, hero: str) -> dict:
 
 
 def current_text(kind: tuple[str, str], payload: dict) -> str:
+    """지금 글 — 이름 자리는 자리 이름 「라라」로 보여 준다 (표시를 그대로 따라 쓰지 않게)."""
+    return bcs.cs.untemplatize(_current_text(kind, payload))
+
+
+def _current_text(kind: tuple[str, str], payload: dict) -> str:
     if kind == ("long", "characters"):
         b = api_book(payload, bcs.cs.SLOT_NAME)
         return json.dumps({"title": b["title"], "protagonist": bcs.cs.SLOT_NAME, "characters": b["characters"],
