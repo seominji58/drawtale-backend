@@ -5,17 +5,21 @@
 캐릭터 목소리 판은 이름마다 달라서 미리 만들지 않는다.
 
     python -m scripts.pregen_card_audio --length long --dry-run          # 몇 편 · 몇 자인지만
-    python -m scripts.pregen_card_audio --length long --keep 5000        # 남은 크레딧이 5,000 자가 될 때까지
+    python -m scripts.pregen_card_audio --length long --budget 20000     # 이번에 많아야 20,000 자 쓰기
 
-ElevenLabs 크레딧을 쓴다 — 허락받고. 남은 양은 계정 조회(무료)로 한 편마다 확인한다.
+ElevenLabs 크레딧을 쓴다 — 허락받고. 계정 조회의 남은 양은 수십 분 늦게 따라온다(2026-10-29 에 2만 자 넘게
+늦음) — 그래서 멈출 곳은 이번에 쓸 글자 수(--budget)로 직접 센다. 계정 조회는 처음 한 번 참고로만 보여 준다.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+
+import httpx
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal
@@ -70,10 +74,23 @@ def pages_of(row: CardStory) -> list[tuple[str, str]]:
     return [("full.mp3", row.payload["text"])]
 
 
+def speak(tts, text: str, tries: int = 6) -> bytes:
+    """429(동시 요청 한도)면 조금 기다렸다 다시."""
+
+    for i in range(tries):
+        try:
+            return tts.speak(text)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 429 or i == tries - 1:
+                raise
+            time.sleep(2 * (i + 1))
+    raise AssertionError
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--length", choices=["long", "short"], required=True)
-    ap.add_argument("--keep", type=int, default=5000, help="남겨 둘 크레딧(자)")
+    ap.add_argument("--budget", type=int, required=True, help="이번에 쓸 크레딧(자) 상한")
     ap.add_argument("--limit", type=int, default=0, help="많아야 몇 편 (0 이면 크레딧이 허락하는 만큼)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
@@ -94,27 +111,26 @@ def main() -> None:
 
     chars = [sum(len(t) for _, t in pages_of(r)) for r, _ in todo]
     left = remaining()
-    print(f"{a.length} 나레이션: 만들 것 {len(todo)}편 · {sum(chars):,}자, 남은 크레딧 {left:,}자, 남길 것 {a.keep:,}자")
+    print(f"{a.length} 나레이션: 만들 것 {len(todo)}편 · {sum(chars):,}자, 남은 크레딧 {left:,}자, 이번 상한 {a.budget:,}자 (계정 조회는 늦게 따라옴)")
     if a.dry_run:
         return
 
     tts = get_tts()
     assert isinstance(tts, ElevenLabsSpeech), "ElevenLabs 설정이 아니다"
     done = spent = 0
-    start = left
     for (r, key), n in zip(todo, chars, strict=True):
-        if left - n < a.keep or (a.limit and done >= a.limit):
+        if spent + n > a.budget or (a.limit and done >= a.limit):
             break
-        with ThreadPoolExecutor(3) as ex:  # 서비스와 같이 쪽 셋씩
-            audio = list(ex.map(lambda p: (p[0], tts.speak(p[1])), pages_of(r)))
-        for name, data in audio:  # 모두 만든 뒤에만 둔다 — 한 쪽이라도 실패하면 이 편은 두지 않는다
-            storage.save(f"{key}/{name}", data)
+        # 쪽마다 만들자마자 둔다 — 끊겨도 다음에 없는 쪽만 만든다. cast.json 은 다 된 뒤에 둬서
+        # 서비스는 다 갖춰진 편만 쓴다 (cached_page_audio)
+        need = [(name, text) for name, text in pages_of(r) if not _has(storage, f"{key}/{name}")]
+        with ThreadPoolExecutor(2) as ex:  # Starter 동시 요청 한도에 걸리지 않게 둘씩
+            list(ex.map(lambda p, k=key: storage.save(f"{k}/{p[0]}", speak(tts, p[1])), need))
         storage.save(f"{key}/cast.json", b"{}")
+        n = sum(len(t) for _, t in need)
         done, spent = done + 1, spent + n
-        # 계정 조회는 늦게 반영될 때가 있어 직접 센 것과 작은 쪽을 쓴다
-        left = min(remaining(), start - spent)
-        print(f"  {done}. {r.place} · {r.problem} · {r.action} · {r.result} ({n}자, 남은 {left:,})", flush=True)
-    print(f"끝: {done}편 · {spent:,}자, 남은 크레딧 {left:,}자, 못 만든 것 {len(todo) - done}편")
+        print(f"  {done}. {r.place} · {r.problem} · {r.action} · {r.result} ({n}자, 이번에 쓴 것 {spent:,})", flush=True)
+    print(f"끝: {done}편 · {spent:,}자, 못 만든 것 {len(todo) - done}편")
 
 
 if __name__ == "__main__":
