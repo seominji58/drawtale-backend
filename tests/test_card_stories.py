@@ -131,3 +131,10 @@ def test_background_saying_no_letters_is_not_text():
 
     assert not _TEXT_WORDS.search(_NO_TEXT.sub("", "a wooden signpost with a carved arrow, no letters, no words"))
     assert _TEXT_WORDS.search(_NO_TEXT.sub("", "a sign that says hello"))
+
+
+def test_name_slot_skips_words_containing_slot_name():
+    """낱말 속 「라라」(랄라라 · 자라라고)는 이름 자리가 아니다 (2026-10-29)."""
+
+    assert cs.templatize("랄라라 콧노래, 쑥쑥 자라라고") == "랄라라 콧노래, 쑥쑥 자라라고"
+    assert cs.templatize("“라라야!” 라라는 웃었어요.") == "“{이름}{조사:야}!” {이름}{조사:는} 웃었어요."
