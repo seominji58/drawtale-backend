@@ -122,3 +122,12 @@ def test_opening_style_reaches_the_message():
 
     msg = book_user_message({"place": "숲", "problem": "길을 잃었어요", "action": "a", "result": "b"}, set(), None, OPENINGS[0])
     assert msg.endswith(f"첫 쪽 시작 방식: {OPENINGS[0]}")
+
+
+def test_background_saying_no_letters_is_not_text():
+    """배경 지시문의 「no letters」 · 「no words」는 글자를 넣으라는 말이 아니다 (2026-10-29 오탐)."""
+
+    from app.services.book import _NO_TEXT, _TEXT_WORDS
+
+    assert not _TEXT_WORDS.search(_NO_TEXT.sub("", "a wooden signpost with a carved arrow, no letters, no words"))
+    assert _TEXT_WORDS.search(_NO_TEXT.sub("", "a sign that says hello"))

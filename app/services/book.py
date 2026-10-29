@@ -51,6 +51,7 @@ def split_pages(pages: int) -> dict[str, int]:
 # 다른 인물을 그릴 자리. 왼쪽 아래 1/3 은 주인공 자리라 비워 둔다
 SLOTS = ("right-middle", "right-bottom")
 # 그림 지시문에 글자를 그리라는 말이 들어가면 안 된다 (글자는 화면이 따로 얹는다)
+_NO_TEXT = re.compile(r"\b(no|without|not any|free of)\s+(text|letters?|words?|writing|labels?|captions?)\b", re.I)
 _TEXT_WORDS = re.compile(
     r"\b(text|letters?|written|words?|sign that says|caption|speech bubble|label)\b", re.I
 )
@@ -482,6 +483,8 @@ def scene_problems(book: Book) -> list[str]:
             continue
         for nm in names:
             bare = bare.replace(nm, "")
+        # 「no letters」 · 「without words」처럼 글자를 넣지 말라는 말은 글자가 아니다 (표지판 쪽에서 오탐, 2026-10-29)
+        bare = _NO_TEXT.sub("", bare)
         if _TEXT_WORDS.search(bare) or re.search(r"[가-힣]", bare):
             out.append(f"{p.page}쪽 배경 지시문에 글자 · 한글(주인공 이름)이 있다")
     return out
