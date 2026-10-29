@@ -115,6 +115,36 @@ def test_stored_story_audio_is_made_once(client, png_bytes, monkeypatch):
     assert c["status"] == "succeeded"  # 저장본이 없는 판은 그때 만든다
 
 
+def test_narration_audio_ignores_name_and_voice(client, png_bytes, monkeypatch):
+    """나레이션 판은 이름 · 주인공 목소리가 달라도 같은 음성, 캐릭터 판은 이름마다 따로 (2026-10-29)."""
+
+    from app.services import jobs
+
+    calls = []
+
+    def fake_audio(story, storage, script=None):
+        calls.append(story.voice_mode)
+        return storage.save(f"results/{story.id}.mp3", b"mp3")
+
+    monkeypatch.setattr(jobs, "make_audio", fake_audio)
+    _add()
+    sentences = [
+        [[NARRATOR, "{이름}{조사:는} 숲에서 길을 잃었어요.", ""]],
+        [[PROTAGONIST, "여기서 기다릴래.", ""]],
+        [[NARRATOR, "{이름}{조사:는} 가만히 기다렸어요.", ""]],
+        [[NARRATOR, "{이름}{조사:는} 길을 찾았어요.", ""]],
+    ]
+    _add(voice_mode="characters", payload={"sentences": sentences})
+    cid = _upload(client, png_bytes)
+    for name, voice in [("토토", "girl"), ("하루", "boy"), ("콩이", "girl")]:
+        assert _story(client, cid, protagonist_name=name, protagonist_voice=voice)["status"] == "succeeded"
+    assert calls == ["narration"]  # 나레이션은 한 번만
+    _story(client, cid, voice_mode="characters", protagonist_name="토토")
+    _story(client, cid, voice_mode="characters", protagonist_name="하루")
+    _story(client, cid, voice_mode="characters", protagonist_name="토토")
+    assert calls == ["narration", "characters", "characters"]  # 이름마다 한 번
+
+
 def test_opening_style_reaches_the_message():
     """조합마다 주는 첫 쪽 시작 방식이 메시지에 실제로 들어간다 (빠져 있던 것을 바로잡음, 2026-10-28)."""
 

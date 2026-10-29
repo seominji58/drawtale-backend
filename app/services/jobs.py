@@ -345,12 +345,16 @@ def card_audio_key(stored, story: Story) -> str:
     """미리 만든 이야기 음성을 다시 쓸 열쇠 (pt_docs 13 1-1 「(이야기, 이름)마다 처음 요청 때 만들어 저장」).
 
     이야기 내용 · 이름 · 읽어주기 · 주인공 목소리 · 음성 업체와 목소리가 같으면 같은 음성이다.
-    이야기를 다시 만들면(내용이 바뀌면) 열쇠도 바뀐다."""
+    이야기를 다시 만들면(내용이 바뀌면) 열쇠도 바뀐다.
+    나레이션 판은 「나는」으로 쓰고 나레이터 하나로 읽는다. 그래서 이름 · 주인공 목소리를 빼고
+    조합마다 한 번만 만든다 (2026-10-29, 이름 6 × 목소리 2 = 열두 벌 중복을 막으려고)."""
 
     s = get_settings()
+    payload = json.dumps(stored.payload, ensure_ascii=False, sort_keys=True)
+    name = (story.protagonist_name or "") if "{이름}" in payload else ""
+    voice = story.protagonist_voice if story.voice_mode == VoiceMode.characters else ""
     parts = [
-        json.dumps(stored.payload, ensure_ascii=False, sort_keys=True), story.length, story.voice_mode,
-        story.protagonist_name or "", story.protagonist_voice, s.tts_provider, s.elevenlabs_voice_id,
+        payload, story.length, story.voice_mode, name, voice, s.tts_provider, s.elevenlabs_voice_id,
     ]
     return f"card_audio/{stored.id}/" + hashlib.sha1("".join(map(str, parts)).encode()).hexdigest()[:16]
 
