@@ -20,11 +20,12 @@ from scripts import batch_card_stories as bcs
 from app.services.story_writer import get_story_writer
 
 
-def export(folder: Path) -> None:
+def export(folder: Path, both: bool = False) -> None:
     state = json.loads(bcs.STATE.read_text(encoding="utf-8")) if bcs.STATE.exists() else {"failed": {}}
     rows = bcs.load_rows()
     stage1, stage2 = bcs.plan(rows, state.get("failed", {}))
-    reqs = stage1 or stage2
+    # both: 기본판 다시 쓰기와, 이미 확정된 기본판의 나머지 판을 한 번에 (기본판이 다시 나가는 조합의 나머지 판은 빠진다)
+    reqs = {**stage1, **stage2} if both else (stage1 or stage2)
     out = folder / "requests"
     out.mkdir(parents=True, exist_ok=True)
     (folder / "responses").mkdir(exist_ok=True)
@@ -34,7 +35,10 @@ def export(folder: Path) -> None:
         system = params["system"] if isinstance(params["system"], str) else "".join(b["text"] for b in params["system"])
         user = params["messages"][0]["content"]
         (out / f"{cid}.json").write_text(json.dumps({"id": cid, "system": system, "user": user}, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"{'1단계(기본판)' if stage1 else '2단계(나머지 판)'} 요청 {len(reqs)}개 → {out}")
+    kinds = {}
+    for cid in reqs:
+        kinds[cid.split("-")[0]] = kinds.get(cid.split("-")[0], 0) + 1
+    print(f"요청 {len(reqs)}개 {kinds} → {out}")
 
 
 def _result(cid: str, text: str):
@@ -53,4 +57,7 @@ def import_(folder: Path) -> None:
 
 if __name__ == "__main__":
     cmd, folder = sys.argv[1], Path(sys.argv[2])
-    {"export": export, "import": import_}[cmd](folder)
+    if cmd == "export":
+        export(folder, both="--both" in sys.argv)
+    else:
+        import_(folder)
