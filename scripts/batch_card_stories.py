@@ -40,6 +40,10 @@ PROMPT_VERSION = "2026-10-28f"  # f: 「어두워졌어요」에서 혼자 밤�
 FIX_BEFORE = "2026-10-28e"  # 이보다 앞선 기본판만 첫 쪽을 고친다 (e 는 이미 첫 쪽 자리를 돌려 받았다)
 # f 에서 다시 쓰는 기본판 — AI 검토가 「혼자 · 밤」을 짚은 문제 (46조합 중 39). 같은 문제 128조합을 모두 다시 쓴다
 REWRITE_PROBLEMS = {"어두워졌어요"}
+REWRITE_BEFORE = "2026-10-28f"  # 이보다 앞선 「어두워졌어요」 기본판만 다시 쓴다
+# AI 검토가 짚은 것을 고쳐 쓰는 회차 (scripts/fix_card_stories.py). 고친 줄에 fixed_round 로 남는다
+FIX_ROUND = "2026-10-29"
+FIX_CODES = {"fixbase": ("long", "narration"), "fixlc": ("long", "characters"), "fixsn": ("short", "narration"), "fixsc": ("short", "characters")}
 PRICE_IN, PRICE_OUT = 2 / 1e6, 10 / 1e6
 # 한 요청 평균 토큰 (2026-10-28 실측) — 보내기 전에 예산을 넘는지 본다
 AVG = {"base": (5200, 5600), "fix": (3500, 1200), "lc": (1800, 1650), "sn": (1800, 700), "sc": (2600, 1350)}
@@ -225,7 +229,7 @@ def plan(rows: dict, failed: dict) -> tuple[dict, dict]:
             if failed.get(f"base-{k}", 0) < 3:
                 stage1[f"base-{k}"] = base_request(c)
             continue
-        if b["prompt_version"] < PROMPT_VERSION and c.problem in REWRITE_PROBLEMS:
+        if b["prompt_version"] < REWRITE_BEFORE and c.problem in REWRITE_PROBLEMS:
             if failed.get(f"base-{k}", 0) < 3:
                 stage1[f"base-{k}"] = base_request(c)
             continue
@@ -276,6 +280,11 @@ def already_saved(rows: dict, code: str, k: str) -> bool:
     """이 요청의 결과가 이미 저장됐나 — 같은 배치를 두 번 읽어도 두 번 저장하지 않는다."""
 
     b = rows.get((k, "long", "narration"))
+    if code in FIX_CODES:
+        d = rows.get((k, *FIX_CODES[code]))
+        if d is None or d.get("fixed_round") != FIX_ROUND:
+            return False
+        return code == "fixbase" or (b is not None and d.get("base_sig") == sig(b["payload"]))
     if code == "base" and flagged(b):
         return False
     if code in KIND_CODE.values() and flagged(rows.get((k, *CODE_KIND[code]))):
@@ -313,6 +322,15 @@ def process(results: list, state: dict, writer) -> tuple[int, int, float]:
             if code == "base":
                 payload, problems = read_base(c, text, writer)
                 r = row(c, "long", "narration", payload, problems, u, opening=OPENINGS[cs.combos().index(c) % len(OPENINGS)], spot=cs.spot_for(c))
+            elif code == "fixbase":
+                payload, problems = read_base(c, text, writer)
+                r = row(c, "long", "narration", payload, problems, u, fixed_round=FIX_ROUND, spot=cs.spot_for(c))
+            elif code in FIX_CODES:
+                kind = FIX_CODES[code]
+                base = rows[(k, "long", "narration")]["payload"]
+                payload, problems, check = cv.parse(kind, json_part(text) if kind != ("short", "narration") else text, c, base, s.story_pages)
+                problems = problems + moderate(writer, check)
+                r = row(c, *kind, payload, problems, u, derived_from="long-narration", base_sig=sig(base), fixed_round=FIX_ROUND)
             elif code == "fix":
                 old = rows[(k, "long", "narration")]["payload"]
                 payload, problems = read_fix(c, text, old, writer)
