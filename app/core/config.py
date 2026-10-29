@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str = ""
     # 한국어를 읽는 모델. 청취 비교로 v4 를 골랐다 (2026-10-08, multilingual_v2 보다 자연스러움).
     # 속도·비용을 줄이려면 flash_v2_5
-    elevenlabs_model_id: str = "eleven_v4"
+    # 2026-10-29 청취 비교로 turbo — v4 와 별 차이 없고 크레딧이 절반 (사용자)
+    elevenlabs_model_id: str = "eleven_v4_turbo"
     # 캐릭터 목소리 판의 인물 목소리는 app/services/voices.py 목록에 있다
 
     # Social login (authorization code flow). Secrets live only here, never in the frontend.

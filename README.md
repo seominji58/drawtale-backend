@@ -68,7 +68,7 @@ docker compose --profile app up -d --build
 
 - `openai` (기본): `OPENAI_API_KEY` (또는 `TTS_API_KEY`)
 - `elevenlabs`: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`(콘솔 Voices 에서 고른 목소리 id),
-  `ELEVENLABS_MODEL_ID`(기본 `eleven_v4` — 10/8 청취 비교로 고름. 빠르고 싸게는 `eleven_flash_v2_5`)
+  `ELEVENLABS_MODEL_ID`(기본 `eleven_v4_turbo` — 10/29 청취 비교로 v4 와 별 차이 없어 크레딧 절반인 turbo 로. 10/8 에는 `eleven_v4`)
   캐릭터 목소리 판(`voice_mode: characters`, 계약 2-5)의 인물 목소리는 `app/services/voices.py` 에 종류별로 있다
   (아이 여/남, 어른 여/남, 할머니, 할아버지, 작은 동물, 큰 동물). 할머니 목소리는 팀 계정에 저장한 것이라 다른 계정 키로는 안 된다
 
