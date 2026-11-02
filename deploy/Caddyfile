@@ -8,9 +8,8 @@
 	}
 }
 
-# 도메인을 정하면 example.com 을 바꾼다. 그러면 HTTPS 인증서를 자동으로 받는다.
-# 도메인이 없으면 아래 한 줄을 :80 으로 두고 쓴다 (인증서 없음, 시연용만)
-api.example.com {
+# 화면은 www.drawtale.kr, API 는 이 주소다. DNS A 레코드가 VM 을 가리키면 HTTPS 인증서를 자동으로 받는다.
+api.drawtale.kr {
 	reverse_proxy backend:8000
 
 	# 올리는 그림이 10MB 까지라 여유를 둔다 (MAX_UPLOAD_MB)
@@ -22,4 +21,16 @@ api.example.com {
 	log {
 		output stdout
 	}
+}
+
+# 화면도 이 VM 이 준다. 빌드 결과는 deploy/www 에 둔다 (README)
+www.drawtale.kr {
+	root * /srv/www
+	try_files {path} /index.html
+	file_server
+	encode gzip
+}
+
+drawtale.kr {
+	redir https://www.drawtale.kr{uri} permanent
 }

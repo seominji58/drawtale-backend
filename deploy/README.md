@@ -13,8 +13,8 @@ Azure VM 한 대에 컨테이너 넷을 띄운다. 큰 그림은 설계 문서
 | **Azure VM** | 메모리 **16GB 급**, Ubuntu. Docker 와 Docker Compose 설치 |
 | **VM 공인 IP 를 DB 방화벽에 등록** | Azure Database for PostgreSQL → 네트워킹 |
 | Blob 컨테이너 | `drawtale-prod` 를 **비공개**로 만든다 |
-| 도메인 (있으면) | `Caddyfile` 의 `api.example.com` 을 바꾼다. 없으면 `:80` 으로 두고 시연용으로 쓴다 |
-| 프론트 배포 | Azure Static Web Apps. `VITE_API_BASE` 를 위 백엔드 주소로 |
+| 도메인 | `drawtale.kr` (가비아). `api` A 레코드는 VM 공인 IP, `www` CNAME 은 Static Web Apps 주소 |
+| 프론트 배포 | Azure Static Web Apps. `VITE_API_BASE=https://api.drawtale.kr/api/v1` |
 
 ## 순서
 
