@@ -42,6 +42,20 @@ docker compose -f docker-compose.prod.yml exec ai python -c "import urllib.reque
 마지막 줄의 `model_loaded` 가 `true` 여야 한다. `false` 면 `torchserve` 가 아직 모델을
 올리는 중이거나 메모리가 모자란 것이다.
 
+## 보안 작업 반영 · 확인 (2026-11-02)
+
+보안 보강(d0bcdb5)은 **VM 에 다시 올려야** 적용된다. 11/2 바깥에서 재 본 실제 사이트는 18개 중 5개 통과(`/docs` 열림 · 보안 헤더 없음 · 로그아웃 API 없음).
+
+```bash
+cd ~/drawtale/drawtale-backend && git pull
+# .env.prod 에 FILE_URL_SECRET 을 넣는다 (파일을 VM 디스크에 두므로 필수, 한 번만)
+python3 -c "import secrets; print('FILE_URL_SECRET=' + secrets.token_hex(32))" >> deploy/.env.prod
+# 화면도 새로 빌드해 deploy/www 에 둔다 (프론트 feat/backend-contract — 로그아웃 · 한도 안내 · 새 파일 주소)
+cd deploy && docker compose -f docker-compose.prod.yml up -d --build   # 마이그레이션 b1c2d3e4f5a6 도 함께 오른다
+```
+
+그다음 **아무 PC 에서** `python deploy/check_live.py` → 모두 「통과」여야 한다 (돈이 드는 요청은 보내지 않는다).
+
 ## 로컬 리허설 기록 (2026-10-13)
 
 VM 없이 **이 compose 파일 그대로** 로컬에서 `ai` · `torchserve` 를 띄워 끝까지 돌려 봤다.
