@@ -44,7 +44,7 @@ docker compose -f docker-compose.prod.yml exec ai python -c "import urllib.reque
 
 ## 보안 작업 반영 · 확인 (2026-11-02)
 
-보안 보강(d0bcdb5)은 **VM 에 다시 올려야** 적용된다. 11/2 바깥에서 재 본 실제 사이트는 18개 중 5개 통과(`/docs` 열림 · 보안 헤더 없음 · 로그아웃 API 없음).
+보안 보강(d0bcdb5)은 VM 에 올려야 적용된다. 11/2 올리기 전 18개 중 5개 → **브랜치 자동 배포(6d2fd9a) 뒤 18 / 18 통과**. 지금은 dev 에 push 하면 저절로 올라가므로 아래 손 절차는 자동 배포가 안 될 때만 쓴다.
 
 ```bash
 cd ~/drawtale/drawtale-backend && git pull
