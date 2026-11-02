@@ -1,9 +1,10 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import rate_limit
 from app.core.auth import optional_user
 from app.core.authz import owned_character, owned_story
 from app.core.errors import AppError
@@ -50,6 +51,7 @@ def book_response(book: dict | None, storage) -> dict | None:
     summary="장소-문제-행동-결과 기반 이야기 생성 Job",
 )
 def create_story(
+    request: Request,
     body: StoryCreateRequest,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -59,17 +61,26 @@ def create_story(
     if character.status != JobStatus.succeeded:
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 이야기를 만들 수 있어요.", 409)
 
-    story = Story(**body.model_dump(exclude={"narrator"}))
-    if body.narrator == Narrator.guardian and user is not None:
-        voice = db.scalar(select(GuardianVoice).where(GuardianVoice.user_id == user.id))
-        story.narrator_voice_id = voice.elevenlabs_voice_id if voice else None
-    db.add(story)
-    db.flush()
-    job = Job(type=JobType.story, character_id=character.id, story_id=story.id)
-    db.add(job)
-    db.commit()
+    rate_limit.check("story", request, user)
+    # 비회원은 교실에서 IP 를 함께 쓰므로 그림 하나에 작업 하나로 막는다
+    busy_key = f"story:{user.id if user else character.id}"
+    rate_limit.claim(busy_key)
+    try:
+        story = Story(**body.model_dump(exclude={"narrator"}))
+        if body.narrator == Narrator.guardian and user is not None:
+            voice = db.scalar(select(GuardianVoice).where(GuardianVoice.user_id == user.id))
+            story.narrator_voice_id = voice.elevenlabs_voice_id if voice else None
+        db.add(story)
+        db.flush()
+        job = Job(type=JobType.story, character_id=character.id, story_id=story.id)
+        db.add(job)
+        db.commit()
+    except Exception:
+        db.rollback()
+        rate_limit.release(busy_key)
+        raise
 
-    background.add_task(run_story_job, job.id)
+    background.add_task(rate_limit.run_then_release, busy_key, run_story_job, job.id)
     return StoryCreateResponse(story_id=story.id, job_id=job.id, status=job.status)
 
 

@@ -10,6 +10,7 @@ os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{_tmp}/test.db"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["LOCAL_STORAGE_DIR"] = f"{_tmp}/storage"
 os.environ["AI_USE_MOCK"] = "true"
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 # 키를 비우면 이야기는 기본 문장으로, 음성은 생략된다.
 # 이 둘을 실제로 시험하는 테스트는 monkeypatch 로 직접 키를 넣는다.
 os.environ["OPENAI_API_KEY"] = ""

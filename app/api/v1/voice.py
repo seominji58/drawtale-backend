@@ -10,10 +10,11 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import rate_limit
 from app.core.auth import current_user
 from app.core.errors import AppError
 from app.db.session import get_db
@@ -91,6 +92,7 @@ def get_voice(
     summary="보호자 목소리 등록 (녹음 → ElevenLabs, 녹음은 저장하지 않음)",
 )
 def register_voice(
+    request: Request,
     audio: UploadFile = File(description="보호자가 1~3분 읽은 녹음 (WAV 권장)"),
     agree_collect: bool = Form(description="[필수] 목소리 수집 · 이용 동의"),
     agree_transfer: bool = Form(description="[필수] ElevenLabs(미국) 국외 이전 동의"),
@@ -105,6 +107,7 @@ def register_voice(
         raise AppError("CONSENT_REQUIRED", "필수 항목에 모두 동의해야 목소리를 등록할 수 있어요.")
     if not tts.voice_cloning_ready():
         raise AppError("VOICE_UNAVAILABLE", "지금은 목소리를 등록할 수 없어요.", 503)
+    rate_limit.check("voice", request, user)
     content_type = (audio.content_type or "").split(";")[0]
     if content_type not in _AUDIO_TYPES:
         raise AppError("INVALID_AUDIO", "녹음 파일을 읽을 수 없어요.")

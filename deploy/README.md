@@ -34,8 +34,9 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 # 4. 올라왔는지 본다
 docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml exec backend curl -fsS localhost:8000/health
-docker compose -f docker-compose.prod.yml exec ai curl -fsS localhost:8001/internal/v1/health
+# backend · ai 이미지에는 curl 이 없어 파이썬으로 부른다
+docker compose -f docker-compose.prod.yml exec backend python -c "import urllib.request as u; print(u.urlopen('http://localhost:8000/health').read().decode())"
+docker compose -f docker-compose.prod.yml exec ai python -c "import urllib.request as u; print(u.urlopen('http://localhost:8001/internal/v1/health').read().decode())"
 ```
 
 마지막 줄의 `model_loaded` 가 `true` 여야 한다. `false` 면 `torchserve` 가 아직 모델을
@@ -63,6 +64,18 @@ VM 없이 **이 compose 파일 그대로** 로컬에서 `ai` · `torchserve` 를
    `torchserve` 상한을 8GB 로 잡았는데 3GB 로 줄였다. **VM 을 16GB 로 잡지 않아도 될 수 있다**
 
 > 그림 한 장 · 동작 하나 · PC 한 대에서 잰 값이다. **VM 에서 다시 재야 한다.**
+
+## 로컬 리허설 기록 (2026-11-02)
+
+`caddy` · `backend` 를 임시 Postgres 에 붙여 돌렸다. `ai` · `torchserve` · Azure · 외부 API 는 빠졌다.
+
+| 무엇 | 결과 |
+|---|---|
+| `Caddyfile` | **켜지지 않던 오류를 고쳤다.** `timeouts` 를 전역 설정으로 옮겨 검증 통과 |
+| Caddy → backend `/health` | **200** (HTTPS 대신 `:80` 으로 시험) |
+| 마이그레이션 | 빈 DB 에서 `b1c2d3e4f5a6` 까지 통과 |
+| 카드 이야기 씨앗 | **2,048편**, 두 번째 실행은 그대로 |
+| `backend` 메모리 | 씨앗을 넣은 뒤 123 MiB |
 
 ## 꼭 확인할 것
 

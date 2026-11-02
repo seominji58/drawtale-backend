@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import rate_limit
 from app.core.auth import current_user, issue_token
 from app.core.errors import AppError
 from app.db.session import get_db
@@ -28,8 +29,9 @@ _ERRORS = {
     summary="소셜 로그인 (kakao · google) — 인가 코드 교환",
 )
 def social_login(
-    provider: str, body: SocialLoginRequest, db: Session = Depends(get_db)
+    request: Request, provider: str, body: SocialLoginRequest, db: Session = Depends(get_db)
 ) -> AuthResponse:
+    rate_limit.check("login", request)
     p = get_provider(provider)
     member_id = fetch_member_id(p, body.code, body.redirect_uri)
 

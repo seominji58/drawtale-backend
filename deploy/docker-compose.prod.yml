@@ -28,7 +28,8 @@ services:
       context: ..
     env_file: .env.prod
     # 마이그레이션을 올릴 때마다 돌린다. 공용 DB 라 팀에 먼저 알린다
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    # backend 는 caddy 만 부르므로 X-Forwarded-For 를 믿어도 된다. 요청 제한이 실제 IP 로 센다
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
     restart: unless-stopped
     # 포트를 바깥에 열지 않는다. caddy 만 안쪽에서 부른다
     expose:

@@ -8,13 +8,19 @@ class AppError(Exception):
     """Error returned to clients as {"error": {"code", "message", "detail"}}."""
 
     def __init__(
-        self, code: str, message: str, status_code: int = 400, detail: dict | None = None
+        self,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        detail: dict | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
         self.detail = detail
+        self.headers = headers
 
 
 def error_body(code: str, message: str, detail: dict | None = None) -> dict:
@@ -25,7 +31,9 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
-            status_code=exc.status_code, content=error_body(exc.code, exc.message, exc.detail)
+            status_code=exc.status_code,
+            content=error_body(exc.code, exc.message, exc.detail),
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)

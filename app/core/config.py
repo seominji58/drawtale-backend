@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     ai_service_url: str = "http://127.0.0.1:8001"
     ai_use_mock: bool = True
     ai_timeout_seconds: float = 60
+    rate_limit_enabled: bool = True
 
     public_base_url: str = "http://127.0.0.1:8000"
     storage_backend: str = "local"

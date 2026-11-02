@@ -1,10 +1,21 @@
 import io
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
+from app.core import rate_limit
 from app.core.auth import optional_user
 from app.core.authz import owned_character
 from app.core.config import get_settings
@@ -77,6 +88,7 @@ def to_response(character: Character) -> CharacterResponse:
     summary="그림 업로드 + 분석 Job 생성",
 )
 def create_character(
+    request: Request,
     background: BackgroundTasks,
     image: UploadFile = File(description="PNG 또는 JPEG, 최대 10MB"),
     keep_original: bool = Form(
@@ -86,6 +98,7 @@ def create_character(
     db: Session = Depends(get_db),
     user: User | None = Depends(optional_user),
 ) -> CharacterCreateResponse:
+    rate_limit.check("analyze", request, user)
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
     data = image.file.read(max_bytes + 1)
     if len(data) > max_bytes:
@@ -99,12 +112,16 @@ def create_character(
     if fmt not in _ALLOWED_FORMATS:
         raise AppError("INVALID_IMAGE", "PNG 또는 JPG 이미지만 올릴 수 있어요.")
 
+    # 비회원은 교실에서 IP 를 함께 쓰므로 동시 실행은 계정이 있을 때만 막는다
+    busy_key = f"analyze:{user.id}" if user else None
+    rate_limit.claim(busy_key)
     character_id = uuid.uuid4()
     storage = get_storage()
-    path = storage.save(f"uploads/{character_id}.{_ALLOWED_FORMATS[fmt]}", data)
+    path = None
 
     # 파일을 먼저 올리므로, DB 저장이 실패하면 주인 없는 파일이 남는다. 그때는 되돌린다
     try:
+        path = storage.save(f"uploads/{character_id}.{_ALLOWED_FORMATS[fmt]}", data)
         character = Character(
             id=character_id,
             user_id=user.id if user else None,
@@ -120,10 +137,12 @@ def create_character(
         db.commit()
     except Exception:
         db.rollback()
-        storage.delete(path)
+        rate_limit.release(busy_key)
+        if path:
+            storage.delete(path)
         raise
 
-    background.add_task(run_analyze_job, job.id)
+    background.add_task(rate_limit.run_then_release, busy_key, run_analyze_job, job.id)
     # 지우라는 요청이 오지 않은 지난 그림을 정리한다. 업로드 때마다 도는 가벼운 조회다
     background.add_task(purge_expired_originals)
     return CharacterCreateResponse(character_id=character.id, job_id=job.id, status=job.status)
