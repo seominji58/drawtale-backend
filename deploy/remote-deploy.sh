@@ -29,6 +29,19 @@ tar -xzf - -C "$TMP"
 cd "$DEPLOY"
 compose() { sudo docker compose -f docker-compose.prod.yml "$@"; }
 
+# 컨테이너를 새로 만들면 uvicorn 이 뜨기까지 몇 초 걸린다. 그동안은 다시 묻는다
+health() {
+	for _ in $(seq 1 30); do
+		if compose exec -T "$1" python -c \
+			"import urllib.request as u; print(u.urlopen('$2').read().decode())" 2>/dev/null; then
+			return 0
+		fi
+		sleep 2
+	done
+	echo "$1 가 응답하지 않는다" >&2
+	return 1
+}
+
 case "$TARGET" in
 backend)
 	# 비밀값과 화면 빌드 결과는 저장소에 없으므로 지우지 않는다
@@ -38,15 +51,13 @@ backend)
 	compose up -d --build db backend
 	# rsync 가 Caddyfile 을 새 파일로 바꾸면 띄워 둔 컨테이너는 옛 파일을 본다. reload 로는 안 바뀐다
 	compose up -d --force-recreate caddy
+	health backend http://localhost:8000/health
 	compose exec -T backend python -m app.seed.card_stories
-	compose exec -T backend python -c \
-		"import urllib.request as u; print(u.urlopen('http://localhost:8000/health').read().decode())"
 	;;
 ai)
 	rsync -a --delete "$TMP"/ "$ROOT/drawtale-ai/"
 	compose up -d --build torchserve ai
-	compose exec -T ai python -c \
-		"import urllib.request as u; print(u.urlopen('http://localhost:8001/internal/v1/health').read().decode())"
+	health ai http://localhost:8001/internal/v1/health
 	;;
 frontend)
 	mkdir -p "$DEPLOY/www"
