@@ -318,24 +318,27 @@ def write_story_book(story: Story) -> Book:
     choices = {s: getattr(story, s) for s in STAGES}
     pages = get_settings().story_pages
     characters = story.voice_mode == VoiceMode.characters
+    # 이름은 나레이션 판에서도 받아 두지만(나중에 캐릭터 목소리 판으로 바꿀 때 쓰려고, 2026-11-02)
+    # 나레이션 판 글은 「나는」이라 이름을 쓰지 않는다
+    name = story.protagonist_name if characters else None
     writer = get_story_writer()
     if writer is None:
         log.info("OPENAI_API_KEY가 없어 틀 문장 그림책을 사용합니다")
-        return fallback_book(choices, pages, story.protagonist_name, set(story.spoken or []))
+        return fallback_book(choices, pages, name, set(story.spoken or []))
     try:
         book = writer.write_book(
             choices,
             set(story.spoken or []),
             pages,
             characters,
-            story.protagonist_name,
+            name,
             story.extras,
         )
     except StoryBlocked:
         raise
     except Exception:
         log.exception("그림책 대본 생성 실패, 틀 문장 그림책으로 대체합니다")
-        return fallback_book(choices, pages, story.protagonist_name, set(story.spoken or []))
+        return fallback_book(choices, pages, name, set(story.spoken or []))
     # 아이가 이름을 짓지 않았으면 GPT 가 지은 이름을 남긴다 (캐릭터 목소리 판)
     story.protagonist_name = story.protagonist_name or book.protagonist or None
     return book
@@ -429,7 +432,7 @@ def make_audio(story: Story, storage, script: Script | None = None) -> str | Non
     그게 실패하면 나레이터 하나로 읽는다.
     """
 
-    tts = get_tts()
+    tts = get_tts(story.narrator_voice_id)
     if tts is None:
         log.info("TTS 키가 없어 음성을 만들지 않습니다")
         return None
@@ -500,7 +503,7 @@ def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
     쪽 하나가 실패하면 그 쪽만 None — 프론트가 브라우저 TTS 로 읽는다.
     """
 
-    tts = get_tts()
+    tts = get_tts(story.narrator_voice_id)
     if tts is None:
         log.info("TTS 키가 없어 쪽 음성을 만들지 않습니다")
         return [None] * len(book.pages)
@@ -580,6 +583,10 @@ def run_story_job(job_id: uuid.UUID) -> None:
             # 카드로만 고른 이야기는 사람이 읽고 통과시킨 저장본을 꺼낸다 — 대본 0초 (pt_docs 13 1-1)
             stored = card_stories.find(db, story)
             name = card_stories.hero_name(story)
+            # 보호자 목소리로 읽는 이야기는 만들어 둔 음성(기본 나레이터)을 쓰지 않고,
+            # 이 목소리 음성을 함께 쓰는 곳(card_audio)에 두지도 않는다
+            # — 이 이야기 폴더에만 (목소리를 지울 때 같이 지운다)
+            shared_audio = stored is not None and not story.narrator_voice_id
             if stored is not None:
                 log.info("story %s: 미리 만든 카드 이야기를 씁니다 (%s)", story.id, stored.id)
                 if name:
@@ -594,7 +601,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 story.text = book.text()
                 audio = (
                     cached_page_audio(story, storage, book, card_audio_key(stored, story))
-                    if stored is not None
+                    if shared_audio
                     else make_page_audio(story, storage, book)
                 )
                 wait_for_motion_clips(db, character)
@@ -614,7 +621,11 @@ def run_story_job(job_id: uuid.UUID) -> None:
             elif stored is not None:
                 script = stored_script(stored.payload, name)
                 story.text = script_text(script) if script else stored.payload["text"]
-                story.audio_blob_path = cached_audio(story, storage, script, card_audio_key(stored, story))
+                story.audio_blob_path = (
+                    cached_audio(story, storage, script, card_audio_key(stored, story))
+                    if shared_audio
+                    else make_audio(story, storage, script)
+                )
                 story.animation_blob_path = render_story(story, character, storage)
             else:
                 script = (

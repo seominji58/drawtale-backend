@@ -8,11 +8,12 @@ from app.core.auth import optional_user
 from app.core.authz import owned_character, owned_story
 from app.core.errors import AppError
 from app.db.session import get_db
-from app.models import Job, Story, StoryActivity, User
+from app.models import GuardianVoice, Job, Story, StoryActivity, User
 from app.schemas.common import ErrorResponse, JobStatus, JobType
 from app.schemas.story import (
     ActivityCreateRequest,
     ActivityResponse,
+    Narrator,
     StoryCreateRequest,
     StoryCreateResponse,
     StoryResponse,
@@ -58,7 +59,10 @@ def create_story(
     if character.status != JobStatus.succeeded:
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 이야기를 만들 수 있어요.", 409)
 
-    story = Story(**body.model_dump())
+    story = Story(**body.model_dump(exclude={"narrator"}))
+    if body.narrator == Narrator.guardian and user is not None:
+        voice = db.scalar(select(GuardianVoice).where(GuardianVoice.user_id == user.id))
+        story.narrator_voice_id = voice.elevenlabs_voice_id if voice else None
     db.add(story)
     db.flush()
     job = Job(type=JobType.story, character_id=character.id, story_id=story.id)
@@ -94,6 +98,7 @@ def get_story(
         protagonist_voice=story.protagonist_voice,
         protagonist_name=story.protagonist_name,
         length=story.length,
+        narrator=Narrator.guardian if story.narrator_voice_id else Narrator.default,
         book=book_response(story.book, storage),
         text=story.text,
         audio_url=storage.url(story.audio_blob_path),

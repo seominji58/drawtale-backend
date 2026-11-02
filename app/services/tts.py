@@ -118,23 +118,75 @@ class ElevenLabsSpeech:
             return res.content
 
 
-def get_tts() -> TextToSpeech | ElevenLabsSpeech | None:
-    """키가 없으면 None. 호출하는 쪽에서 음성 없이 진행한다."""
+def get_tts(narrator_voice_id: str | None = None) -> TextToSpeech | ElevenLabsSpeech | None:
+    """키가 없으면 None. 호출하는 쪽에서 음성 없이 진행한다.
+
+    narrator_voice_id 가 있으면 나레이터를 그 목소리로 (보호자 목소리, ElevenLabs 일 때만).
+    """
 
     settings = get_settings()
     if settings.tts_provider == "elevenlabs":
-        if not (settings.elevenlabs_api_key and settings.elevenlabs_voice_id):
+        voice_id = narrator_voice_id or settings.elevenlabs_voice_id
+        if not (settings.elevenlabs_api_key and voice_id):
             log.warning("TTS_PROVIDER=elevenlabs 인데 키나 목소리 id 가 없어 음성 없이 진행합니다")
             return None
         return ElevenLabsSpeech(
             settings.elevenlabs_api_key,
-            settings.elevenlabs_voice_id,
+            voice_id,
             settings.elevenlabs_model_id,
             timeout=settings.tts_timeout_seconds,
         )
+    if narrator_voice_id:
+        log.warning("보호자 목소리는 ElevenLabs 에서만 읽습니다. 기본 나레이터로 읽습니다")
 
     # TTS도 OpenAI를 쓰므로 전용 키가 없으면 OpenAI 키를 그대로 쓴다
     key = settings.tts_api_key or settings.openai_api_key
     if not key:
         return None
     return TextToSpeech(key, timeout=settings.tts_timeout_seconds)
+
+
+# ---- 보호자 목소리 (2026-11-02) ----
+# Instant Voice Cloning. 녹음 1~3분으로 목소리를 만든다. 녹음은 우리 서버에 남기지 않는다.
+ELEVENLABS_ADD_VOICE_URL = "https://api.elevenlabs.io/v1/voices/add"
+ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/v1/voices/{voice_id}"
+
+
+def voice_cloning_ready() -> bool:
+    """보호자 목소리를 받을 수 있는지 — ElevenLabs 로 읽고 키가 있을 때만."""
+
+    s = get_settings()
+    return s.tts_provider == "elevenlabs" and bool(s.elevenlabs_api_key)
+
+
+def add_voice(name: str, audio: bytes, filename: str, content_type: str) -> str:
+    """녹음으로 목소리를 만들고 그 id 를 돌려준다. 실패하면 httpx 예외."""
+
+    s = get_settings()
+    with httpx.Client(timeout=s.tts_timeout_seconds * 2, transport=_TRANSPORT) as http:
+        res = http.post(
+            ELEVENLABS_ADD_VOICE_URL,
+            headers={"xi-api-key": s.elevenlabs_api_key},
+            data={
+                "name": name,
+                "description": "drawtale guardian narrator",
+                # 집에서 녹음하니 잡음을 걷어 낸다
+                "remove_background_noise": "true",
+            },
+            files={"files": (filename, audio, content_type)},
+        )
+        res.raise_for_status()
+        return res.json()["voice_id"]
+
+
+def delete_voice(voice_id: str) -> None:
+    """ElevenLabs 에서 목소리를 지운다. 이미 없으면(404) 지운 것으로 본다."""
+
+    s = get_settings()
+    with httpx.Client(timeout=s.tts_timeout_seconds, transport=_TRANSPORT) as http:
+        res = http.delete(
+            ELEVENLABS_VOICE_URL.format(voice_id=voice_id),
+            headers={"xi-api-key": s.elevenlabs_api_key},
+        )
+        if res.status_code != 404:
+            res.raise_for_status()

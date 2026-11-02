@@ -21,6 +21,18 @@ class ProtagonistVoice(StrEnum):
     boy = "boy"
 
 
+class Narrator(StrEnum):
+    """S-13 「내 목소리로 읽어주기」 (2026-11-02).
+
+    guardian 이면 로그인한 보호자가 등록한 목소리로 나레이션을 읽는다.
+
+    목소리가 없거나 로그인하지 않았으면 기본 나레이터로 읽는다 (아이 흐름을 막지 않는다).
+    """
+
+    default = "default"
+    guardian = "guardian"
+
+
 class StoryLength(StrEnum):
     """이야기 길이.
 
@@ -71,7 +83,8 @@ class StoryCreateRequest(BaseModel):
         max_length=10,
         examples=["토토"],
         description=(
-            "아이가 지은 주인공 이름. 캐릭터 목소리 판의 나레이션이 이 이름으로 3인칭으로 부른다"
+            "아이가 지은 주인공 이름. 캐릭터 목소리 판의 나레이션이 이 이름으로 3인칭으로 부른다. "
+            "나레이션 판에서도 받아 저장하지만 글에는 쓰지 않는다 (「나는」)"
         ),
     )
     length: StoryLength = Field(
@@ -92,6 +105,13 @@ class StoryCreateRequest(BaseModel):
         default=None,
         description=(
             "함께 나오는 인물 · 문제 때 기분 · 마지막 기분 카드. long 대본에만 쓴다 (시험)"
+        ),
+    )
+    narrator: Narrator = Field(
+        default=Narrator.default,
+        description=(
+            "guardian: 보호자가 등록한 목소리로 나레이션 (로그인 · 목소리 등록 필요, 없으면 기본). "
+            "캐릭터 목소리 판에서도 나레이터만 바뀌고 인물 대사 목소리는 그대로"
         ),
     )
 
@@ -150,6 +170,9 @@ class StoryResponse(BaseModel):
     protagonist_voice: ProtagonistVoice
     protagonist_name: str | None
     length: StoryLength
+    narrator: Narrator = Field(
+        default=Narrator.default, description="실제로 읽은 나레이터. guardian 이면 보호자 목소리"
+    )
     book: Book | None = Field(
         default=None, description="length=long 일 때만. text 는 쪽 글을 이어 붙인 것"
     )

@@ -47,7 +47,8 @@ class FakeAI:
 
 
 def _story(**kw):
-    base = dict(id=uuid.uuid4(), voice_mode="narration", protagonist_voice="girl", voice_cast=None)
+    base = dict(id=uuid.uuid4(), voice_mode="narration", protagonist_voice="girl", voice_cast=None,
+                narrator_voice_id=None)
     return SimpleNamespace(**{**base, **kw})
 
 
@@ -68,7 +69,7 @@ def _character(**kw):
 
 def test_page_audio_one_file_per_page(monkeypatch):
     tts = FakeTTS()
-    monkeypatch.setattr(jobs, "get_tts", lambda: tts)
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: tts)
     book = fallback_book(CHOICES, 8)
     story = _story()
     paths = jobs.make_page_audio(story, get_storage(), book)
@@ -82,20 +83,20 @@ def test_page_audio_one_file_per_page(monkeypatch):
 def test_page_audio_failure_is_per_page(monkeypatch):
     book = fallback_book(CHOICES, 8)
     tts = FakeTTS(fail_on=book.pages[3].text())
-    monkeypatch.setattr(jobs, "get_tts", lambda: tts)
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: tts)
     paths = jobs.make_page_audio(_story(), get_storage(), book)
     assert paths[3] is None
     assert all(p for i, p in enumerate(paths) if i != 3)
 
 
 def test_page_audio_without_tts(monkeypatch):
-    monkeypatch.setattr(jobs, "get_tts", lambda: None)
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: None)
     assert jobs.make_page_audio(_story(), get_storage(), fallback_book(CHOICES, 8)) == [None] * 8
 
 
 def test_character_voices_only_on_dialogue_pages(monkeypatch):
     tts = FakeTTS()
-    monkeypatch.setattr(jobs, "get_tts", lambda: tts)
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: tts)
     pages = [
         Page(1, "place", "walk", [(NARRATOR, "숲에 갔어요.", "")]),
         Page(
@@ -250,7 +251,7 @@ def test_page_clips_skip_without_session(monkeypatch):
 
 def test_long_story_response_has_page_urls(client, png_bytes, monkeypatch):
     tts = FakeTTS()
-    monkeypatch.setattr(jobs, "get_tts", lambda: tts)
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: tts)
     res = client.post("/api/v1/characters", files={"image": ("d.png", png_bytes, "image/png")})
     res = client.post(
         "/api/v1/stories",

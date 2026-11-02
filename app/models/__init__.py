@@ -2,6 +2,7 @@
 from app.db.base import Base
 from app.models.card_story import CardStory
 from app.models.character import Character, JointCorrection
+from app.models.guardian_voice import GuardianVoice
 from app.models.job import Job
 from app.models.story import Story, StoryActivity
 from app.models.user import AuthToken, SocialAccount, User
@@ -17,4 +18,5 @@ __all__ = [
     "User",
     "SocialAccount",
     "AuthToken",
+    "GuardianVoice",
 ]

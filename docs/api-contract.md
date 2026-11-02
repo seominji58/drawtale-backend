@@ -259,6 +259,14 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 `extras` (선택, 2026-10-27 **시험** — 회의에서 빼면 지운다) — S-07 네 칸 사이에 더 받은 카드 라벨 `{"who": "강아지", "feel_problem": "무서웠어요", "feel_result": "기뻤어요"}` (각 20자, 다 선택).
 `long` 대본에서 「함께 나오는 인물」은 그 인물이 카드 속 「누군가」 몫을 하고, 기분은 문제 쪽 · 마지막 쪽 주인공 마음으로 거의 그대로 쓴다. `short` 에는 아직 안 쓴다. 저장: `stories.extras`(JSON, migration `f8a1b2c3d4e5`). 프론트 `open-decisions.md` 0-11.
 
+`protagonist_name` 은 나레이션 판에서도 받아 저장한다 (2026-11-02, 나중에 캐릭터 목소리 판으로 바꿀 때 쓰려고). 나레이션 판 글은 「나는」 그대로 — 이름을 넣지 않는다.
+
+`narrator` (선택, 기본 `default`, 2026-11-02) — S-13 「내 목소리로 읽어주기」. `guardian` 이면 **로그인한 보호자가 등록한 목소리**(2-12)로 나레이션을 읽는다.
+`Authorization: Bearer` 가 있어야 계정을 안다. 로그인하지 않았거나 목소리가 없으면 **오류 없이 기본 나레이터**로 읽는다 (아이 흐름을 막지 않는다).
+캐릭터 목소리 판에서도 나레이터만 바뀌고 인물 대사 목소리는 그대로. 미리 만든 카드 이야기여도 저장된 음성(`card_audio/`)을 쓰지 않고
+이 목소리로 그때 만들어 **이 이야기 폴더에만** 둔다 (함께 쓰는 곳에 두지 않음). 쓴 목소리 id 는 `stories.narrator_voice_id` (migration `b1c2d3e4f5a6`).
+`TTS_PROVIDER=elevenlabs` 일 때만 바뀐다. 2-6 응답의 `narrator` 는 실제로 읽은 나레이터 (`default` · `guardian`).
+
 `voice_mode` (선택, 기본 `narration`, 2026-10-08) — S-13 「읽어주기」.
 
 | 값 | `text` | `audio_url` |
@@ -448,6 +456,20 @@ S-10 을 한 번 할 때마다 하나를 보낸다. 맞혀서 S-11 로 가면 `c
 **응답 `201`** — 요청 필드 + `id`, `story_id`, `created_at`. 없는 이야기는 `404 STORY_NOT_FOUND`.
 
 `GET /api/v1/stories/{story_id}/activity` 는 그 이야기의 기록을 오래된 것부터 배열로 준다 (어른 화면용, 아직 쓰는 화면 없음).
+
+### 2-12. `/api/v1/me/voice` — 보호자 목소리 (나레이터 대신, 2026-11-02)
+
+보호자 모드. **로그인 필요** (`Authorization: Bearer`, 없으면 `401 UNAUTHORIZED`). 아이 목소리는 받지 않는다.
+녹음은 **서버에 저장하지 않는다** — 받은 그대로 ElevenLabs(Instant Voice Cloning, 미국)로 넘기고 목소리 id 와 동의 기록만 둔다 (표 `guardian_voices`, migration `b1c2d3e4f5a6`).
+
+| | 요청 | 응답 |
+|---|---|---|
+| `GET` | — | `200 {"registered", "available", "consent_version", "consented_at"}` — `available` 은 이 서버가 목소리를 받을 수 있는지(`TTS_PROVIDER=elevenlabs` + 키) |
+| `POST` | `multipart/form-data`: `audio`(1~3분 녹음, WAV 권장 · mp3 · mp4 · webm, 20MB 이하), `agree_collect` · `agree_transfer` · `own_voice`(모두 `true`), `consent_version`(동의한 안내문 판, 프론트 `S13Voice.tsx` `CONSENT_VERSION`) | `201` 위와 같은 모양. 다시 녹음하면 예전 목소리를 지우고 바꾼다 |
+| `DELETE` | — | `204`. ElevenLabs 목소리와 **그 목소리로 만든 이야기 음성 파일**(`audio_url` · 쪽 `audio_url`)을 함께 지운다. 동의 · 철회 시각은 남긴다 |
+
+오류: 동의가 하나라도 빠지면 `400 CONSENT_REQUIRED`(ElevenLabs 로 아무것도 보내지 않음), 형식 · 크기 `400 INVALID_AUDIO`, ElevenLabs 설정 없음 `503 VOICE_UNAVAILABLE`, ElevenLabs 실패 `502 VOICE_FAILED`.
+요금제마다 만들 수 있는 목소리 개수가 정해져 있다 — 가족마다 하나씩 쓰므로 배포 전에 확인한다.
 
 ---
 
