@@ -47,7 +47,9 @@ backend)
 	# 비밀값과 화면 빌드 결과는 저장소에 없으므로 지우지 않는다
 	rsync -a --delete --exclude deploy/.env --exclude deploy/.env.prod --exclude deploy/www \
 		"$TMP"/ "$ROOT/drawtale-backend/"
-	cp "$DEPLOY/remote-deploy.sh" "$HOME/remote-deploy.sh"
+	# 돌고 있는 이 파일을 덮어쓰면 sh 가 바뀐 내용을 이어 읽다 깨진다. 새 파일로 바꿔 끼운다
+	install -m 700 "$DEPLOY/remote-deploy.sh" "$HOME/remote-deploy.sh.new"
+	mv "$HOME/remote-deploy.sh.new" "$HOME/remote-deploy.sh"
 	compose up -d --build db backend
 	# rsync 가 Caddyfile 을 새 파일로 바꾸면 띄워 둔 컨테이너는 옛 파일을 본다. reload 로는 안 바뀐다
 	compose up -d --force-recreate caddy
