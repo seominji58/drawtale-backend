@@ -35,8 +35,9 @@ backend)
 	rsync -a --delete --exclude deploy/.env --exclude deploy/.env.prod --exclude deploy/www \
 		"$TMP"/ "$ROOT/drawtale-backend/"
 	cp "$DEPLOY/remote-deploy.sh" "$HOME/remote-deploy.sh"
-	compose up -d --build db backend caddy
-	compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+	compose up -d --build db backend
+	# rsync 가 Caddyfile 을 새 파일로 바꾸면 띄워 둔 컨테이너는 옛 파일을 본다. reload 로는 안 바뀐다
+	compose up -d --force-recreate caddy
 	compose exec -T backend python -m app.seed.card_stories
 	compose exec -T backend python -c \
 		"import urllib.request as u; print(u.urlopen('http://localhost:8000/health').read().decode())"
