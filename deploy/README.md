@@ -116,6 +116,34 @@ VM 없이 **이 compose 파일 그대로** 로컬에서 `ai` · `torchserve` 를
 `docker compose -f docker-compose.prod.yml exec backend python -m app.seed.card_stories`
 — 저장소의 `app/seed/card_stories.jsonl.gz`(통과한 2,048편)를 `card_stories` 표에 넣는다.
 
+## 자동 배포 (GitHub Actions)
+
+| 저장소 | 이 브랜치에 푸시하면 | 하는 일 |
+|---|---|---|
+| backend | `dev` | 테스트 → 통과하면 `backend` · `caddy` 다시 만들기, 카드 이야기 씨앗 |
+| ai | `dev` | `ai` · `torchserve` 다시 만들기 |
+| frontend | `feat/backend-contract` · `dev` | 빌드(타입 검사 포함) → `deploy/www` 바꾸기 |
+
+PR 은 테스트 · 빌드만 하고 올리지 않는다. 받는 쪽은 VM 의 `~/remote-deploy.sh`
+(이 폴더의 `remote-deploy.sh`) 하나다. 배포 전용 키는 `authorized_keys` 의 `command=` 로
+**이 스크립트만** 돌 수 있게 묶어 둔다.
+
+**저장소마다 넣어 둘 값** (Settings → Secrets and variables → Actions)
+
+| 종류 | 이름 | 값 |
+|---|---|---|
+| Secret | `DEPLOY_SSH_KEY` | 배포 전용 개인 키 (`.pem` 이 아니다) |
+| Secret | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan -t ed25519 VM주소` 결과 |
+| Variable | `DEPLOY_HOST` | VM 공인 IP |
+| Variable (frontend 만) | `VITE_API_BASE` · `VITE_KAKAO_CLIENT_ID` · `VITE_GOOGLE_CLIENT_ID` | 화면 빌드 값 |
+
+환경변수(`.env.prod`)만 바꿀 때는 빌드가 필요 없다: `docker compose -f docker-compose.prod.yml up -d backend`
+
+## 백업
+
+`backup.sh` 를 VM cron 으로 하루 한 번 돌려 DB 를 `~/backups` 에 7일치 둔다.
+**같은 디스크라 VM 이 사라지면 함께 사라진다.** 실제 서비스 전에는 바깥(Blob 등)으로 옮긴다.
+
 ## 아직 정하지 않은 것
 
 | 무엇 | |
@@ -123,4 +151,4 @@ VM 없이 **이 compose 파일 그대로** 로컬에서 `ai` · `torchserve` 를
 | 이미지를 레지스트리로 보낼지 | 지금 절차는 **VM 에서 직접 빌드**한다. 느리지만 단계가 적다 |
 | 비밀값을 VM 에 넣는 방법 | 지금은 손으로 `nano`. Azure 쪽 설정값으로 옮길지 |
 | 로그를 모을지 | 지금은 `docker compose logs`. 컨테이너를 지우면 사라진다 |
-| 백업 | DB · Blob 둘 다 없다 |
+| 백업 | DB 는 같은 VM 디스크에만 있다. 그림 · 영상 파일은 없다 |

@@ -1,0 +1,44 @@
+# dev 에 푸시하면 테스트를 돌리고, 통과하면 VM 에 올린다.
+# PR 은 테스트만 한다 (배포 키를 쓰지 않는다).
+name: CI/CD
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      # 시험은 SQLite · 가짜 AI 로 돈다 (tests/conftest.py). 외부 API 를 부르지 않는다
+      - run: pytest -q
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 배포 키 준비
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: VM 에 올리기
+        run: |
+          git archive --format=tar.gz HEAD \
+            | ssh -i ~/.ssh/deploy_key azureuser@${{ vars.DEPLOY_HOST }} backend
