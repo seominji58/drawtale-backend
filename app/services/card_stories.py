@@ -49,7 +49,7 @@ PLACE_SPOTS = {
 }
 
 
-def spot_for(combo: "Combo") -> str:
+def spot_for(combo: Combo) -> str:
     """조합마다 정해진 첫 쪽 자리. 다시 만들어도 같은 조합은 같은 자리다."""
 
     same = [c for c in combos() if c.place == combo.place]
@@ -208,7 +208,7 @@ def short_payload(text: str | None = None, sentences=None, cast: dict | None = N
 
 
 # ── 꺼내 주기 ──
-def find(db, story) -> "CardStory | None":
+def find(db, story) -> CardStory | None:
     """이 이야기에 쓸 저장본. 카드로만 고른 이야기이고 사람이 통과시킨 것이 있을 때만.
 
     아이가 말로 덧붙였거나(spoken) 더 고른 칸(extras)이 있으면 None — 그때 만든다.

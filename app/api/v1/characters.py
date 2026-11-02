@@ -107,8 +107,11 @@ def create_character(
     try:
         with Image.open(io.BytesIO(data)) as img:
             fmt, (width, height) = img.format, img.size
-    except UnidentifiedImageError as e:
+    except (UnidentifiedImageError, Image.DecompressionBombError) as e:
         raise AppError("INVALID_IMAGE", "이미지 파일을 읽을 수 없어요.") from e
+    # 머리만 읽어 크기를 본다 — 작은 파일에 아주 큰 그림을 담으면 풀 때 메모리가 터진다 (2026-11-02)
+    if width * height > get_settings().max_image_pixels:
+        raise AppError("FILE_TOO_LARGE", "그림이 너무 커요. 더 작은 사진으로 올려 주세요.")
     if fmt not in _ALLOWED_FORMATS:
         raise AppError("INVALID_IMAGE", "PNG 또는 JPG 이미지만 올릴 수 있어요.")
 

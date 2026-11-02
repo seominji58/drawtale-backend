@@ -81,6 +81,27 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173"
 
+    # ---- 보안 (2026-11-02) ----
+    # 로컬 저장소(/files) 주소에 붙이는 서명 키.
+    # 비어 있으면 켤 때마다 새로 만든다 (다시 켜면 예전 주소는 안 열림).
+    # 배포에서 STORAGE_BACKEND=local 로 쓴다면 꼭 정한다. azure 는 SAS 주소라 쓰지 않는다
+    file_url_secret: str = ""
+    # 로컬 파일 주소가 열리는 시간 (azure 는 azure_sas_hours)
+    file_url_hours: int = 24
+    # 이야기 하루 한도 — 유료 API 를 막는 둑. 분당 · 동시 제한(rate_limit.py)에 더해
+    # 비회원은 IP 마다, 회원은 계정마다(rate_limit.daily), 전체는 서버 하나(DB 로 셈)
+    guest_stories_per_day: int = 30
+    member_stories_per_day: int = 60
+    max_stories_per_day: int = 1000
+    # 그림 픽셀 수 상한. 작은 파일에 아주 큰 그림을 담아 메모리를 터뜨리는 것을 막는다 (5000×5000)
+    max_image_pixels: int = 25_000_000
+    # API 문서(/docs · /openapi.json). 비우면 APP_ENV 가 prod · production 일 때 끈다
+    enable_docs: bool | None = None
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("prod", "production")
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

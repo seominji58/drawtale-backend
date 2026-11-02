@@ -1,15 +1,18 @@
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core import rate_limit
 from app.core.auth import optional_user
 from app.core.authz import owned_character, owned_story
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.session import get_db
 from app.models import GuardianVoice, Job, Story, StoryActivity, User
+from app.models.mixins import utcnow
 from app.schemas.common import ErrorResponse, JobStatus, JobType
 from app.schemas.story import (
     ActivityCreateRequest,
@@ -62,6 +65,7 @@ def create_story(
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 이야기를 만들 수 있어요.", 409)
 
     rate_limit.check("story", request, user)
+    _daily_limits(db, request, user)
     # 비회원은 교실에서 IP 를 함께 쓰므로 그림 하나에 작업 하나로 막는다
     busy_key = f"story:{user.id if user else character.id}"
     rate_limit.claim(busy_key)
@@ -82,6 +86,27 @@ def create_story(
 
     background.add_task(rate_limit.run_then_release, busy_key, run_story_job, job.id)
     return StoryCreateResponse(story_id=story.id, job_id=job.id, status=job.status)
+
+
+def _daily_limits(db: Session, request: Request, user: User | None) -> None:
+    """이야기 하루 한도 (2026-11-02 보안).
+
+    이야기 하나가 Claude · ElevenLabs · OpenAI 검열을 부를 수 있어서 비회원은 IP 마다,
+    회원은 계정마다(429), 서버 전체는 DB 로(503) 센다
+    """
+
+    s = get_settings()
+    per_day = s.guest_stories_per_day if user is None else s.member_stories_per_day
+    rate_limit.daily("story", request, user, per_day)
+    if s.max_stories_per_day > 0:
+        since = utcnow() - timedelta(days=1)
+        made = db.scalar(
+            select(func.count()).select_from(Story).where(Story.created_at >= since)
+        ) or 0
+        if made >= s.max_stories_per_day:
+            raise AppError(
+                "DAILY_LIMIT", "오늘은 이야기를 더 만들 수 없어요. 내일 다시 해 주세요.", 503
+            )
 
 
 @router.get(

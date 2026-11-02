@@ -67,6 +67,30 @@ def check(bucket: str, request: Request, user: User | None = None) -> None:
         hits.append(now)
 
 
+DAY_SECONDS = 24 * 60 * 60
+
+
+def daily(bucket: str, request: Request, user: User | None, limit: int) -> None:
+    """하루(24시간) 기준 한도 (2026-11-02).
+
+    비회원은 IP, 회원은 계정마다. limit 이 0 이하면 세지 않는다.
+
+    분당 제한만으로는 하루 종일 조금씩 부르는 것을 못 막는다 — 이야기는 유료 API 를 부른다.
+    """
+
+    if not _enabled() or limit <= 0:
+        return
+    who = str(user.id) if user else (request.client.host if request.client else "unknown")
+    now = time.monotonic()
+    with _lock:
+        hits = _hits[(f"{bucket}-day", who)]
+        while hits and hits[0] <= now - DAY_SECONDS:
+            hits.popleft()
+        if len(hits) >= limit:
+            raise _too_many(max(1, math.ceil(hits[0] + DAY_SECONDS - now)))
+        hits.append(now)
+
+
 def claim(key: str | None) -> None:
     """같은 key 로 돌고 있는 작업이 있으면 429. key 가 None 이면 막지 않는다."""
 

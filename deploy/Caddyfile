@@ -17,6 +17,14 @@ api.drawtale.kr {
 		max_size 20MB
 	}
 
+	# 보안 헤더 (2026-11-02). 백엔드도 nosniff · X-Frame-Options 를 붙인다
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
 	encode gzip
 	log {
 		output stdout
@@ -29,6 +37,17 @@ www.drawtale.kr {
 	try_files {path} /index.html
 	file_server
 	encode gzip
+
+	# 화면 보안 헤더 (2026-11-02). 프론트 public/staticwebapp.config.json 의 globalHeaders 와 같게 둔다
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(self), microphone=(self), geolocation=(), payment=()"
+		-Server
+	}
 }
 
 drawtale.kr {

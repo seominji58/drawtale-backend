@@ -261,8 +261,8 @@ def test_long_story_response_has_page_urls(client, png_bytes, monkeypatch):
     assert story["status"] == "succeeded"
     assert story["audio_url"] is None  # 긴 이야기는 쪽마다만 만든다
     pages = story["book"]["pages"]
-    assert all(p["audio_url"].endswith(f"page{p['page']:02d}.mp3") for p in pages)
+    assert all(p["audio_url"].split("?")[0].endswith(f"page{p['page']:02d}.mp3") for p in pages)
     assert "audio_blob_path" not in pages[0]
     # 목 AI 는 영상을 만들지 않는다 → 쪽 영상은 없고 이야기 영상 자리에는 그림
     assert all(p["animation_url"] is None for p in pages)
-    assert story["animation_url"].endswith(".png")
+    assert story["animation_url"].split("?")[0].endswith(".png")  # 주소에 서명이 붙는다 (2026-11-02)

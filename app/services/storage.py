@@ -7,14 +7,52 @@
 DB 에 담는 경로(`uploads/{id}.png`, `results/{id}.mp4`)도 양쪽이 같다.
 """
 
+import hashlib
+import hmac
 import logging
+import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import parse_qs, quote
+
+from starlette.responses import PlainTextResponse
+from starlette.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 
 log = logging.getLogger(__name__)
+
+
+# 로컬 파일 주소 서명 키. FILE_URL_SECRET 이 없으면 켤 때마다 새로 만든다
+_FILE_KEY = (get_settings().file_url_secret or secrets.token_hex(32)).encode()
+
+
+def file_signature(path: str, exp: int) -> str:
+    return hmac.new(_FILE_KEY, f"{path}:{exp}".encode(), hashlib.sha256).hexdigest()[:40]
+
+
+class SignedStaticFiles(StaticFiles):
+    """서명 · 기한이 맞는 요청만 파일을 준다 (2026-11-02 보안).
+
+    전에는 /files 가 저장소 폴더 전체를 그대로 내보내서, 주소만 알면 아이 원본 그림 · 영상 · 음성을
+    로그인 · 주인 확인 없이 열 수 있었다. 이제 API 가 내준 주소(?exp=&sig=)만 열린다.
+    맞지 않으면 404
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            path = self.get_path(scope).replace("\\", "/")
+            q = parse_qs(scope.get("query_string", b"").decode())
+            exp, sig = (q.get("exp") or [""])[0], (q.get("sig") or [""])[0]
+            ok = exp.isdigit() and int(exp) >= time.time() and hmac.compare_digest(
+                sig, file_signature(path, int(exp))
+            )
+            if not ok:
+                await PlainTextResponse("Not Found", status_code=404)(scope, receive, send)
+                return
+        await super().__call__(scope, receive, send)
 
 
 class LocalStorage:
@@ -37,9 +75,12 @@ class LocalStorage:
             (self.root / path).unlink(missing_ok=True)
 
     def url(self, path: str | None) -> str | None:
+        """기한 · 서명이 붙은 주소 (azure SAS 와 같은 구실)."""
         if not path:
             return None
-        return f"{self.public_base_url}/files/{path}"
+        exp = int(time.time()) + get_settings().file_url_hours * 3600
+        sig = file_signature(path, exp)
+        return f"{self.public_base_url}/files/{quote(path)}?exp={exp}&sig={sig}"
 
 
 # 확장자 → 브라우저가 바로 재생할 수 있게 붙여 주는 형식

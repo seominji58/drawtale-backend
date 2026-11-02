@@ -47,7 +47,8 @@ def test_full_flow(client, png_bytes):
     story = client.get(f"/api/v1/stories/{res.json()['story_id']}").json()
     assert "학교" in story["text"]
     assert story["voice_mode"] == "narration"  # 보내지 않으면 나레이션 판
-    assert story["animation_url"].endswith(".png")
+    # 주소에 서명이 붙는다 (2026-11-02)
+    assert story["animation_url"].split("?")[0].endswith(".png")
 
     file_path = story["animation_url"].replace("http://127.0.0.1:8000", "")
     assert client.get(file_path).status_code == 200

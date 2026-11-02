@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import rate_limit
-from app.core.auth import current_user, issue_token
+from app.core.auth import current_user, hash_token, issue_token
 from app.core.errors import AppError
 from app.db.session import get_db
-from app.models import SocialAccount, User
+from app.models import AuthToken, SocialAccount, User
 from app.models.mixins import utcnow
 from app.schemas.auth import AuthResponse, MeResponse, SocialLoginRequest
 from app.schemas.common import ErrorResponse
@@ -20,6 +20,27 @@ _ERRORS = {
     409: {"model": ErrorResponse},
     503: {"model": ErrorResponse},
 }
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="로그아웃 — 이 토큰을 서버에서 지운다 (2026-11-02)",
+)
+def logout(
+    authorization: str | None = Header(default=None), db: Session = Depends(get_db)
+) -> Response:
+    """전에는 프론트가 토큰을 버리기만 해서, 공용 기기에 남은 토큰이 30일 동안 살아 있었다.
+    토큰이 없거나 이미 지워졌어도 204 — 로그아웃은 늘 성공한 것으로 본다.
+    "/{provider}" 보다 먼저 둔다 (아니면 provider="logout" 로 잡힌다)"""
+
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() == "bearer" and token:
+        row = db.scalar(select(AuthToken).where(AuthToken.token_hash == hash_token(token)))
+        if row is not None:
+            db.delete(row)
+            db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

@@ -97,6 +97,8 @@ Meta AnimatedDrawings skeleton에서 `root`를 뺀 15개. **배열 순서도 아
 | code | HTTP | 언제 |
 |---|---|---|
 | `VALIDATION_ERROR` | 422 | 요청 형식 오류 (필드 누락, 관절 개수 틀림 등) |
+| `RATE_LIMITED` | 429 | 요청이 너무 잦음 (F-NFR-10, `app/core/rate_limit.py`). 분당 그림 5 · 이야기 3 · 보호자 목소리 3 · 로그인 5(회원은 계정, 비회원은 IP 로 ×4), 같은 작업이 돌고 있으면 막음, 이야기 하루 비회원 30 · 회원 60(`GUEST_STORIES_PER_DAY` · `MEMBER_STORIES_PER_DAY`). `Retry-After` 머리말이 붙는다 |
+| `DAILY_LIMIT` | 503 | 서버 전체 이야기 하루 상한(`MAX_STORIES_PER_DAY`, 기본 1000)을 넘음 — 유료 API 둑 |
 | `INVALID_IMAGE` | 400 | 이미지가 아니거나 PNG/JPG가 아님 |
 | `FILE_TOO_LARGE` | 400 | 10MB 초과 |
 | `JOINT_OUT_OF_IMAGE` | 400 | 관절 좌표가 이미지 밖 |
@@ -361,6 +363,14 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 > moderation 에 걸리면 이야기는 `failed`, Job `error.code` 는 `CONTENT_BLOCKED` 다 (1-4).
 > 설정에 따라 값이 달라질 뿐 **응답 형식은 바뀌지 않는다.**
+
+### 2-7-1. `POST /api/v1/auth/logout` — 로그아웃 (2026-11-02)
+
+`Authorization: Bearer` 의 토큰을 서버에서 지운다. 토큰이 없거나 이미 지워졌어도 `204`. 전에는 프론트가 토큰을 버리기만 해서 서버에서는 30일 동안 살아 있었다.
+
+### 파일 주소 (2026-11-02)
+
+응답의 `*_url`(그림 · 영상 · 음성)은 **기한이 있는 주소**다. azure 는 SAS(`AZURE_SAS_HOURS`, 기본 2시간), 로컬 저장소는 `/files/...?exp=&sig=` 서명(`FILE_URL_HOURS`, 기본 24시간, 키 `FILE_URL_SECRET`). 서명 없이 `/files/` 경로만으로는 404. 저장해 둔 주소로 다시 열 때는 이야기를 다시 조회해 새 주소를 받는다.
 
 ### 2-7. `POST /api/v1/auth/{provider}` — 소셜 로그인
 
