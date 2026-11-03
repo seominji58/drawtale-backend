@@ -7,6 +7,7 @@ from app.models import Character
 from app.models.mixins import utcnow
 from app.services import jobs
 from app.services.originals import purge_expired_originals
+from app.services.storage import get_storage
 
 _STORY = {"place": "학교", "problem": "비가 와요", "action": "물어봤어요", "result": "웃었어요"}
 
@@ -111,3 +112,23 @@ def test_cutout_is_saved_and_deleted_with_original(client, png_bytes, monkeypatc
 def test_no_cutout_when_ai_has_none(client, png_bytes):
     cid = _upload(client, png_bytes)
     assert client.get(f"/api/v1/characters/{cid}").json()["analysis"]["cutout_url"] is None
+
+
+def test_story_keeps_its_own_still_after_original_is_deleted(client, png_bytes, monkeypatch):
+    """이야기는 잘라 낸 정지 그림을 자기 폴더에 복사해 둔다. 원본을 지워도 남는다."""
+
+    from app.services.ai_client import MockAIClient
+
+    class CutoutAI(MockAIClient):
+        def cutout(self, request_id):
+            return b"png-cutout"
+
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: CutoutAI(size))
+    cid = _upload(client, png_bytes)
+    sid = client.post("/api/v1/stories", json={"character_id": cid, **_STORY}).json()["story_id"]
+    assert client.delete(f"/api/v1/characters/{cid}/original").status_code == 204
+
+    still = client.get(f"/api/v1/stories/{sid}").json()["still_url"]
+    assert still and f"results/{sid}/still.png" in still
+    path = still.split("/files/", 1)[1].split("?")[0]
+    assert get_storage().read(path) == b"png-cutout"

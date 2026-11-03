@@ -139,6 +139,7 @@ def get_story(
         text=story.text,
         audio_url=storage.url(story.audio_blob_path),
         animation_url=storage.url(story.animation_blob_path),
+        still_url=storage.url(story.still_blob_path),
         created_at=story.created_at,
         updated_at=story.updated_at,
     )

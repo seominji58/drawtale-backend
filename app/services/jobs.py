@@ -587,6 +587,21 @@ def wait_for_motion_clips(db, character: Character) -> None:
         db.refresh(character)
 
 
+def copy_still(story: Story, character: Character, storage) -> str | None:
+    """캐릭터의 잘라 낸 정지 그림을 이 이야기 폴더로 복사한다. 없거나 실패하면 None (2026-11-03).
+
+    화면이 원본 사진을 통째로 보이지 않게 이야기가 자기 그림을 갖는다 — 새로고침하거나 책장에서
+    다시 열어도, 원본(과 캐릭터 쪽 사본)을 지운 뒤에도 남는다"""
+
+    if not character.cutout_blob_path:
+        return None
+    try:
+        return storage.save(f"results/{story.id}/still.png", storage.read(character.cutout_blob_path))
+    except Exception:
+        log.exception("story %s: 정지 그림 복사 실패", story.id)
+        return None
+
+
 def run_story_job(job_id: uuid.UUID) -> None:
     with db_session.SessionLocal() as db:
         job = db.get(Job, job_id)
@@ -653,6 +668,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 story.audio_blob_path = make_audio(story, storage, script)
                 story.animation_blob_path = render_story(story, character, storage)
 
+            story.still_blob_path = copy_still(story, character, storage)
             story.status = JobStatus.succeeded
             _succeed(job)
         except StoryBlocked:

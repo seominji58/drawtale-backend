@@ -43,6 +43,10 @@ class Story(IdMixin, TimestampMixin, Base):
     text: Mapped[str | None] = mapped_column(Text, default=None)
     audio_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
     animation_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
+    # 배경을 잘라 낸 캐릭터 정지 그림의 이 이야기 사본 (2026-11-03).
+    # 움직임 없는 쪽 · 완료 화면 · 표지에 쓴다.
+    # 캐릭터 쪽 사본은 원본을 지울 때 같이 지워지므로, 영상처럼 이야기에 따로 둔다
+    still_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
 
 
 class StoryActivity(IdMixin, TimestampMixin, Base):

@@ -179,6 +179,10 @@ class StoryResponse(BaseModel):
     text: str | None
     audio_url: str | None
     animation_url: str | None
+    still_url: str | None = Field(
+        default=None,
+        description="배경을 잘라 낸 캐릭터 정지 그림. 영상이 없는 쪽 · 완료 화면 · 표지",
+    )
     created_at: datetime
     updated_at: datetime
 
