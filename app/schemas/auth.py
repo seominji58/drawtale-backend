@@ -17,6 +17,15 @@ class SocialLoginRequest(BaseModel):
     )
 
 
+class SocialSignupRequest(BaseModel):
+    ticket: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="SIGNUP_REQUIRED 응답의 detail.signup_ticket (10분)",
+    )
+    agreed: bool = Field(description="이용약관·개인정보 처리방침에 동의했는지. true 여야 한다")
+
+
 class AuthResponse(BaseModel):
     token: str = Field(description="Authorization: Bearer 로 보낸다")
     account: str = Field(description="화면에 보일 계정 이름. 이름을 받지 않으므로 제공자 이름이다")

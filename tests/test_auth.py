@@ -65,6 +65,42 @@ def test_first_login_requires_terms(client, providers):
     assert _count(User) == 0
 
 
+def test_signup_ticket_finishes_without_second_provider_trip(client, providers):
+    ticket = _login(client, "kakao").json()["error"]["detail"]["signup_ticket"]
+    trips = len(providers["seen"])
+
+    res = client.post("/api/v1/auth/social-signup", json={"ticket": ticket, "agreed": True})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["account"] == "카카오 계정"
+    assert len(providers["seen"]) == trips  # 카카오에 다시 묻지 않았다
+    # 같은 확인증을 또 보내도 계정은 하나, 다음부터는 바로 로그인
+    again = client.post("/api/v1/auth/social-signup", json={"ticket": ticket, "agreed": True})
+    assert again.status_code == 200
+    assert _login(client, "kakao").status_code == 200
+    assert _count(User) == 1 and _count(SocialAccount) == 1
+
+
+def test_signup_ticket_needs_terms_and_a_valid_signature(client, providers, monkeypatch):
+    ticket = _login(client, "google").json()["error"]["detail"]["signup_ticket"]
+
+    no_terms = client.post("/api/v1/auth/social-signup", json={"ticket": ticket, "agreed": False})
+    assert no_terms.json()["error"]["code"] == "TERMS_REQUIRED"
+
+    body, _, sig = ticket.partition(".")
+    forged = client.post(
+        "/api/v1/auth/social-signup", json={"ticket": f"{body}x.{sig}", "agreed": True}
+    )
+    assert forged.json()["error"]["code"] == "SIGNUP_EXPIRED"
+
+    from app.core import auth as core_auth
+
+    monkeypatch.setattr(core_auth.time, "time", lambda: 10**10)
+    late = client.post("/api/v1/auth/social-signup", json={"ticket": ticket, "agreed": True})
+    assert late.json()["error"]["code"] == "SIGNUP_EXPIRED"
+    assert _count(User) == 0
+
+
 @pytest.mark.parametrize("provider,label", [("kakao", "카카오"), ("google", "Google")])
 def test_signup_then_login(client, providers, provider, label):
     res = _login(client, provider, agreed=True)

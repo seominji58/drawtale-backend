@@ -413,8 +413,22 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 - `account`: 화면에 보일 이름. 이름을 받지 않으므로 제공자 이름이다
 
 **처음 온 사용자**: `agreed: false` 이고 처음 보는 회원번호면 `409 SIGNUP_REQUIRED`.
-**제공자 동의 화면은 우리 약관 동의를 대신하지 않는다.** Frontend 는 가입 화면에서 동의를 받고
-`agreed: true` 로 다시 로그인한다. 이때 계정이 만들어진다.
+**제공자 동의 화면은 우리 약관 동의를 대신하지 않는다.** 응답 `detail.signup_ticket` 에
+확인한 회원번호를 서명한 **가입 확인증(10분)** 이 실려 온다. Frontend 는 가입 화면에서 동의를 받고
+아래 2-7b 로 보낸다 — 인가 코드는 한 번만 쓸 수 있어, 전에는 제공자 화면을 한 번 더 거쳐야 했다 (2026-11-03).
+
+### 2-7b. `POST /api/v1/auth/social-signup` — 처음 온 사람의 가입
+
+```json
+{ "ticket": "<detail.signup_ticket>", "agreed": true }
+```
+
+응답은 2-7 과 같다. 같은 확인증을 다시 보내도 계정은 하나다.
+
+| 오류 | 언제 |
+|---|---|
+| `400 TERMS_REQUIRED` | `agreed` 가 false |
+| `400 SIGNUP_EXPIRED` | 10분이 지났거나 확인증이 틀림 → 제공자 버튼으로 다시 |
 
 ### 2-8. `GET /api/v1/auth/me` — 로그인 확인
 
