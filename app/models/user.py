@@ -20,6 +20,9 @@ class User(IdMixin, TimestampMixin, Base):
     # When the user accepted our terms and privacy policy (the provider's consent screen
     # does not cover our own terms). A user cannot exist without it.
     terms_agreed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # 어느 판의 약관 · 개인정보 처리방침에 동의했는지 (프론트 src/legal LEGAL_VERSION, 2026-11-03).
+    # 그 전에 가입한 계정은 비어 있다
+    consent_version: Mapped[str | None] = mapped_column(String(40), default=None)
 
     social_accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="user")
 

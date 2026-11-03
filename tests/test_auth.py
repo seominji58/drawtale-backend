@@ -81,6 +81,19 @@ def test_signup_ticket_finishes_without_second_provider_trip(client, providers):
     assert _count(User) == 1 and _count(SocialAccount) == 1
 
 
+def test_signup_records_which_terms_version_was_agreed(client, providers):
+    ticket = _login(client, "kakao").json()["error"]["detail"]["signup_ticket"]
+
+    res = client.post(
+        "/api/v1/auth/social-signup",
+        json={"ticket": ticket, "agreed": True, "consent_version": "2026-11-03-draft"},
+    )
+
+    assert res.status_code == 200
+    with SessionLocal() as db:
+        assert db.scalar(select(User.consent_version)) == "2026-11-03-draft"
+
+
 def test_signup_ticket_needs_terms_and_a_valid_signature(client, providers, monkeypatch):
     ticket = _login(client, "google").json()["error"]["detail"]["signup_ticket"]
 

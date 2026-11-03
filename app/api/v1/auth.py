@@ -62,8 +62,10 @@ def _account(db: Session, provider: str, member_id: str) -> SocialAccount | None
     )
 
 
-def _create_account(db: Session, provider: str, member_id: str) -> SocialAccount:
-    user = User(terms_agreed_at=utcnow())
+def _create_account(
+    db: Session, provider: str, member_id: str, consent_version: str | None
+) -> SocialAccount:
+    user = User(terms_agreed_at=utcnow(), consent_version=consent_version)
     db.add(user)
     db.flush()
     account = SocialAccount(user_id=user.id, provider=provider, provider_user_id=member_id)
@@ -94,7 +96,9 @@ def social_signup(
     p = get_provider(provider)
 
     # 확인증으로 두 번 눌러도 계정은 하나다
-    account = _account(db, p.name, member_id) or _create_account(db, p.name, member_id)
+    account = _account(db, p.name, member_id) or _create_account(
+        db, p.name, member_id, body.consent_version
+    )
     token = issue_token(db, account.user)
     db.commit()
     return AuthResponse(token=token, account=f"{p.label} 계정")
@@ -125,7 +129,7 @@ def social_login(
                 409,
                 detail={"signup_ticket": issue_signup_ticket(p.name, member_id)},
             )
-        account = _create_account(db, p.name, member_id)
+        account = _create_account(db, p.name, member_id, body.consent_version)
 
     token = issue_token(db, account.user)
     db.commit()

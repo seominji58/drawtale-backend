@@ -420,10 +420,13 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 ### 2-7b. `POST /api/v1/auth/social-signup` — 처음 온 사람의 가입
 
 ```json
-{ "ticket": "<detail.signup_ticket>", "agreed": true }
+{ "ticket": "<detail.signup_ticket>", "agreed": true, "consent_version": "2026-11-03-draft" }
 ```
 
 응답은 2-7 과 같다. 같은 확인증을 다시 보내도 계정은 하나다.
+`agreed` 는 이용약관 · 개인정보 수집 · 이용 · 만 14세 이상 보호자 · 교사 **세 가지 모두**에 동의했다는 뜻이다
+(화면이 항목마다 따로 받는다). `consent_version` 은 동의한 약관 판으로 `users.consent_version` 에 남긴다.
+2-7 에서 `agreed: true` 로 가입할 때도 같은 값을 보낸다 (2026-11-03).
 
 | 오류 | 언제 |
 |---|---|
