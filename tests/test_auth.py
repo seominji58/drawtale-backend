@@ -11,6 +11,13 @@ from app.services import social
 
 REDIRECT = "http://localhost:5173/auth/{}/callback"
 
+
+@pytest.fixture
+def client(anon_client):
+    """로그인 시험은 로그인하지 않은 사람에서 시작한다."""
+
+    return anon_client
+
 # What each provider's profile endpoint returns for the member id "12345"
 _PROFILE = {
     "kakao": {"id": 12345},

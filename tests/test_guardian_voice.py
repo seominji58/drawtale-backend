@@ -100,9 +100,9 @@ def _story(client, token, cid, **kw):
     return client.get(f"/api/v1/stories/{res.json()['story_id']}", headers=_auth(token)).json()
 
 
-def test_needs_login(client, eleven):
+def test_needs_login(anon_client, eleven):
     audio = {"audio": ("v.wav", WAV, "audio/wav")}
-    res = client.post("/api/v1/me/voice", files=audio, data=CONSENT)
+    res = anon_client.post("/api/v1/me/voice", files=audio, data=CONSENT)
     assert res.status_code == 401
     assert eleven == []
 

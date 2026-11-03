@@ -19,8 +19,9 @@ def _upload(client, png_bytes):
     return client.post("/api/v1/characters", files={"image": ("a.png", png_bytes, "image/png")})
 
 
-def test_guest_uploads_stop_at_limit_with_retry_after(client, png_bytes):
-    allowed = rate_limit.PER_MINUTE["analyze"] * rate_limit.GUEST_FACTOR
+def test_uploads_stop_at_limit_with_retry_after(client, png_bytes):
+    # 가입 없이는 올릴 수 없어 늘 계정으로 센다 (비회원 배수는 붙지 않는다)
+    allowed = rate_limit.PER_MINUTE["analyze"]
     for _ in range(allowed):
         assert _upload(client, png_bytes).status_code == 202
 

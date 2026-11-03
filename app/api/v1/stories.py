@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core import rate_limit
-from app.core.auth import optional_user
+from app.core.auth import current_user
 from app.core.authz import owned_character, owned_story
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -58,7 +58,7 @@ def create_story(
     body: StoryCreateRequest,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> StoryCreateResponse:
     character = owned_character(db, body.character_id, user)
     if character.status != JobStatus.succeeded:
@@ -118,7 +118,7 @@ def _daily_limits(db: Session, request: Request, user: User | None) -> None:
 def get_story(
     story_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> StoryResponse:
     story = owned_story(db, story_id, user)
     storage = get_storage()
@@ -155,7 +155,7 @@ def create_activity(
     story_id: uuid.UUID,
     body: ActivityCreateRequest,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> ActivityResponse:
     story = owned_story(db, story_id, user)
     activity = StoryActivity(story_id=story.id, **body.model_dump())
@@ -173,7 +173,7 @@ def create_activity(
 def list_activity(
     story_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> list[ActivityResponse]:
     story = owned_story(db, story_id, user)
     rows = db.scalars(

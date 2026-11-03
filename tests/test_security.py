@@ -78,12 +78,13 @@ def test_files_need_signature(client):
 
 # ---- 이야기 하루 한도 (분당 · 동시 제한은 tests/test_rate_limit.py) ----
 
-def test_guest_daily_limit(client, limits, monkeypatch):
-    monkeypatch.setattr(limits, "guest_stories_per_day", 1)
+def test_member_daily_limit(client, limits, monkeypatch):
+    # 가입 없이는 쓸 수 없어 늘 계정 한도로 센다 (2026-11-03)
+    monkeypatch.setattr(limits, "member_stories_per_day", 1)
     cid = _upload(client)
     assert client.post("/api/v1/stories", json={"character_id": cid, **STORY}).status_code == 202
     assert client.post("/api/v1/stories", json={"character_id": cid, **STORY}).status_code == 429
-    # 회원은 계정 한도로 따로 센다
+    # 다른 계정은 따로 센다
     token = _token()
     mine = _upload(client, {"Authorization": f"Bearer {token}"})
     res = client.post("/api/v1/stories", json={"character_id": mine, **STORY},

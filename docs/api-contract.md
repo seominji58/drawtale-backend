@@ -441,8 +441,8 @@ Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
 { "user_id": "…", "providers": ["kakao"] }
 ```
 
-> 지금은 다른 API 가 로그인을 요구하지 않는다 (비회원도 전부 쓸 수 있다).
-> 캐릭터·이야기를 계정에 묶을지는 합의 필요 (4절 9번).
+> **그림 · 작업 · 이야기 API 는 모두 로그인이 필요하다** (`Authorization: Bearer`, 없으면 `401 UNAUTHORIZED`).
+> 가입 없이는 쓸 수 없게 정했다 (pt_docs 03 F-ACC-03 · 04, 2026-11-03 코드 반영). 올린 것은 그 계정에 묶이고 다른 계정은 404 로 본다.
 
 ### 2-9. `GET /health`
 
@@ -636,4 +636,4 @@ AI 서버에 남은 임시 파일(원본, 마스크)을 정리한다. 응답은 
 | 6 | motion 목록 | ✅ wave_hello, jumping, jumping_jacks, dab, zombie + 순화 동작 wave_hello_gentle, jumping_gentle (drawtale-ai `feat/gentle-motions`). Backend 는 순화 동작만 쓴다 | A1 |
 | 7 | 애니메이션 형식 | ✅ MP4 확정 | 완료 |
 | 8 | AI 에러 code 목록 | 3-2 표 (A1 코드 기준) | A1 |
-| 9 | 로그인/세션 | 소셜 로그인(카카오·구글) 추가, **선택 사항**. 비회원도 전부 사용 가능. 캐릭터·이야기를 계정에 묶는 것은 미정 | 전원 |
+| 9 | 로그인/세션 | ~~선택 사항~~ → **필수** (2026-11-03). 비회원 시작을 뺐고, 캐릭터 · 이야기는 계정에 묶인다 | 전원 |

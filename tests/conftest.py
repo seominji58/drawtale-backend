@@ -35,6 +35,26 @@ def _db():
 
 @pytest.fixture
 def client() -> TestClient:
+    """로그인한 보호자. 가입 없이는 쓸 수 없다 (03 F-ACC-03 · 04, 11-03 코드 반영)."""
+
+    from app.core.auth import issue_token
+    from app.db.session import SessionLocal
+    from app.models import User
+    from app.models.mixins import utcnow
+
+    with SessionLocal() as db:
+        user = User(terms_agreed_at=utcnow())
+        db.add(user)
+        db.flush()
+        token = issue_token(db, user)
+        db.commit()
+    return TestClient(app, headers={"Authorization": f"Bearer {token}"})
+
+
+@pytest.fixture
+def anon_client() -> TestClient:
+    """로그인하지 않은 사람."""
+
     return TestClient(app)
 
 

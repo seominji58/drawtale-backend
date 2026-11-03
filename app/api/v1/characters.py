@@ -16,7 +16,7 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from app.core import rate_limit
-from app.core.auth import optional_user
+from app.core.auth import current_user
 from app.core.authz import owned_character
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -96,7 +96,7 @@ def create_character(
         description="S-13 「원본 그림 보관」. false 면 그림을 떠날 때, 늦어도 보관 시간 뒤 지운다",
     ),
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> CharacterCreateResponse:
     rate_limit.check("analyze", request, user)
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
@@ -160,7 +160,7 @@ def create_character(
 def get_character(
     character_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> CharacterResponse:
     return to_response(owned_character(db, character_id, user))
 
@@ -176,7 +176,7 @@ def update_joints(
     body: JointsUpdateRequest,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> CharacterResponse:
     character = owned_character(db, character_id, user)
     if character.status != JobStatus.succeeded:
@@ -215,7 +215,7 @@ def update_joints(
 def remove_original(
     character_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> Response:
     """업로드 파일과 AI 세션을 지운다. 관절과 이야기(문장 · 음성 · MP4)는 남는다.
 

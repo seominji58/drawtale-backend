@@ -1,8 +1,7 @@
 """주인이 있는 자료는 그 주인만 본다.
 
 아이 그림과 이야기가 담기므로, 주소(UUID)를 아는 것만으로 남의 것을 보거나
-고칠 수 있으면 안 된다. 로그인하지 않고 올린 것은 주인이 없으므로 전과 같이 쓴다
-(아이는 계정 없이도 끝까지 갈 수 있어야 한다 — F-ACC-01).
+고칠 수 있으면 안 된다. 로그인하지 않으면 올리거나 볼 수 없다 (03 F-ACC-03 · 04).
 """
 
 from app.core.auth import issue_token
@@ -40,12 +39,14 @@ def _upload(client, png_bytes, headers=None):
     return res.json()
 
 
-def test_anonymous_upload_stays_open(client, png_bytes):
-    """로그인하지 않고 올린 그림은 주인이 없다. 전과 같이 주소로 연다."""
+def test_signed_out_cannot_upload_or_read(client, anon_client, png_bytes):
+    """가입 없이는 쓸 수 없다. 동의 없이 아이 그림이 들어오는 경로를 남기지 않는다 (03, 10-12)."""
 
+    res = anon_client.post("/api/v1/characters", files={"image": ("d.png", png_bytes, "image/png")})
+    assert res.status_code == 401
     body = _upload(client, png_bytes)
-    assert client.get(f"/api/v1/characters/{body['character_id']}").status_code == 200
-    assert client.get(f"/api/v1/jobs/{body['job_id']}").status_code == 200
+    assert anon_client.get(f"/api/v1/characters/{body['character_id']}").status_code == 401
+    assert anon_client.get(f"/api/v1/jobs/{body['job_id']}").status_code == 401
 
 
 def test_owner_can_read_own_character(client, png_bytes):

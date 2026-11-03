@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.auth import optional_user
+from app.core.auth import current_user
 from app.core.authz import owned_character, owned_story
 from app.core.errors import AppError
 from app.db.session import get_db
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 def get_job(
     job_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User | None = Depends(optional_user),
+    user: User = Depends(current_user),
 ) -> JobResponse:
     job = db.get(Job, job_id)
     if job is None:
