@@ -131,27 +131,28 @@ def test_page_clips_copy_prerendered(monkeypatch):
     monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
     storage = get_storage()
     storage.save("previews/c1-wave.mp4", b"wave")
-    storage.save("previews/c1-jump.mp4", b"jump")
+    for m in ("walk", "run", "dab_gentle"):
+        storage.save(f"previews/c1-{m}.mp4", m.encode())
     story = _story()
     character = _character(
         preview_blob_path="previews/c1-wave.mp4",
-        motion_clips={"jumping_gentle": "previews/c1-jump.mp4"},
+        motion_clips={m: f"previews/c1-{m}.mp4" for m in ("walk", "run", "dab_gentle")},
     )
     clips = jobs.make_page_clips(story, character, storage, Book("숲", PAGES, [1, 2, 3, 5]))
     # 미리 만든 영상을 쓰므로 렌더하지 않는다.
     # 관절을 고쳐도 이야기 영상이 남게 이야기 폴더로 복사한다
     assert ai.motions == []
+    # 쪽 동작마다 제 동작 (2026-11-03 — 전에는 걷기 · 뛰기 · 춤이 모두 점프였다)
     assert clips == {
-        "wave_hello_gentle": f"results/{story.id}/wave_hello_gentle.mp4",
-        "jumping_gentle": f"results/{story.id}/jumping_gentle.mp4",
+        m: f"results/{story.id}/{m}.mp4" for m in ("wave_hello_gentle", "walk", "run", "dab_gentle")
     }
-    assert storage.read(clips["jumping_gentle"]) == b"jump"
+    assert storage.read(clips["walk"]) == b"walk"
 
 
 def test_page_clips_skip_failed_prerender(monkeypatch):
     ai = FakeAI()
     monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
-    character = _character(motion_clips={"jumping_gentle": None})
+    character = _character(motion_clips={"walk": None, "run": None, "dab_gentle": None})
     clips = jobs.make_page_clips(
         _story(), character, get_storage(), Book("숲", PAGES, [1, 2, 3, 5])
     )
@@ -166,12 +167,9 @@ def test_page_clips_render_for_old_characters(monkeypatch):
     clips = jobs.make_page_clips(
         _story(), _character(), get_storage(), Book("숲", PAGES, [1, 2, 3, 5])
     )
-    # 미리 만든 것이 없는 예전 그림: 동작마다 한 번 (walk · run · dance 가 같은 동작)
-    assert sorted(ai.motions) == [
-        ("jumping_gentle", jobs.PREVIEW_MAX_FRAMES),
-        ("wave_hello_gentle", jobs.PREVIEW_MAX_FRAMES),
-    ]
-    assert len(clips) == 2
+    # 미리 만든 것이 없는 예전 그림: 쪽에 나오는 동작마다 한 번
+    assert sorted(m for m, _ in ai.motions) == ["dab_gentle", "run", "walk", "wave_hello_gentle"]
+    assert len(clips) == 4
 
 
 class FakeDB:
@@ -193,8 +191,8 @@ def test_store_previews_then_motion_clips(monkeypatch):
     character = _character(preview_status="rendering", motion_clips={})
     db = FakeDB()
     jobs._store_previews(db, character, get_storage())
-    # 미리보기를 먼저 커밋한다 (S-05 가 기다린다). 통통 뛰기는 그다음
-    assert [m for m, _ in ai.motions] == ["wave_hello_gentle", "jumping_gentle"]
+    # 미리보기를 먼저 커밋한다 (S-05 가 기다린다). 쪽 동작들은 그다음
+    assert [m for m, _ in ai.motions] == ["wave_hello_gentle", *jobs.PRERENDER_MOTIONS]
     assert character.preview_status == "ready" and db.commits == 2
     assert character.motion_clips["jumping_gentle"].endswith("-jumping_gentle.mp4")
 

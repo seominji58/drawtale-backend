@@ -108,13 +108,18 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
 # dab·jumping_jacks·zombie 는 팔을 크게 접거나 내려서 쓰지 않는다.
 #
 # 키워드는 행동 카드 16장(pt_docs 05 S-07 「행동 카드 16장」, 2026-10-28 확정 · 프론트 choices.ts)에서 왔다.
-# 카드의 동작 열은 손 흔들기 · 걷기 · 뛰기 · 대기 · 사라지기 다섯인데, 순화 동작 파일은 뛰기 · 손 흔들기 둘뿐이라
-# 뛰기 카드(「달려」)만 뛰기로 가고 나머지는 손 흔들기(기본)로 간다. 걷기 · 대기 동작이 생기면 여기에 더한다.
+# 카드의 동작 열(손 흔들기 · 걷기 · 뛰기 · 대기 · 사라지기)을 따른다 (2026-11-03).
+# 걷기 · 뛰기는 CMU Mocap, 춤은 Meta dab 을 순화한 것 (drawtale-ai runtime/ai_server/motions).
+# 대기 · 사라지기는 동작 파일이 없어 손 흔들기(기본)로 둔다. 위에서부터 먼저 맞는 낱말을 쓴다
+# — 「다가가서 도와줬어요」는 걷기 카드라 「도와」(손 흔들기)보다 「다가가」가 먼저다.
 ACTION_MOTIONS: dict[str, str] = {
-    "달려": "jumping_gentle",
-    "뛰": "jumping_gentle",
+    "달려": "run",
+    "뛰": "run",
+    "걸": "walk",
+    "다가가": "walk",
+    "나섰": "walk",
     "점프": "jumping_gentle",
-    "춤": "jumping_gentle",
+    "춤": "dab_gentle",
     "운동": "jumping_gentle",
     "흔들": "wave_hello_gentle",
     "불렀": "wave_hello_gentle",
@@ -176,7 +181,8 @@ def render_clip(character: Character, motion: str) -> bytes:
 # 긴 이야기 쪽 동작 중 미리 렌더해 둘 것 (손 흔들기는 미리보기가 맡는다).
 # 이야기를 만들 때 렌더하면 한 편이 2~5분 걸려서(2026-10-12 실측) 캐릭터를 만든 직후
 # 미리보기에 이어 렌더한다 — 아이가 이름을 짓고 카드를 고르는 동안 끝난다
-PRERENDER_MOTIONS = ("jumping_gentle",)
+# 2026-11-03: 걷기 · 뛰기 · 점프 · 춤. 자주 나오는 순서로 그린다 (VM 2코어에서 하나에 10초 안팎)
+PRERENDER_MOTIONS = ("walk", "run", "jumping_gentle", "dab_gentle")
 # 이야기를 만들 때 미리 렌더가 아직 돌고 있으면 기다리는 시간. 넘으면 그 쪽들은 멈춘 그림
 PRERENDER_WAIT_SECONDS = 180
 
@@ -244,20 +250,28 @@ def run_preview_job(character_id: uuid.UUID) -> None:
         _store_previews(db, character, get_storage())
 
 
-def render_with_fallback(ai, req: RenderRequest):
-    """순화 동작으로 렌더한다. AI 서버가 그 동작을 아직 모르면 원래 동작으로 다시 요청한다.
+# AI 서버가 아직 모르는 동작이면 대신 쓸 것 (백엔드가 AI 보다 먼저 배포될 때)
+MOTION_FALLBACK = {"walk": "jumping_gentle", "run": "jumping_gentle", "dab_gentle": "jumping_gentle"}
 
-    순화 동작은 drawtale-ai `feat/gentle-motions` 에 있다. 그게 AI dev 에 합쳐지기 전에도
-    이야기 만들기가 `UNKNOWN_MOTION` 으로 실패하지 않게 한다.
+
+def render_with_fallback(ai, req: RenderRequest):
+    """동작을 렌더한다. AI 서버가 그 동작을 아직 모르면 대신할 동작으로 다시 요청한다.
+
+    걷기 · 뛰기 · 춤(2026-11-03)은 점프로, 그 밖의 순화 동작(*_gentle)은 원래 동작으로 간다.
+    AI 배포가 늦어도 이야기 만들기가 `UNKNOWN_MOTION` 으로 실패하지 않게 한다.
     """
 
     try:
         return ai.render(req)
     except AppError as e:
-        gentle = req.motion.endswith("_gentle")
-        if not gentle or (e.detail or {}).get("ai_code") != "UNKNOWN_MOTION":
+        if (e.detail or {}).get("ai_code") != "UNKNOWN_MOTION":
             raise
-        base = req.motion.removesuffix("_gentle")
+        if req.motion in MOTION_FALLBACK:
+            base = MOTION_FALLBACK[req.motion]
+        elif req.motion.endswith("_gentle"):
+            base = req.motion.removesuffix("_gentle")
+        else:
+            raise
         log.warning("AI does not know %s yet; rendering %s instead", req.motion, base)
         return ai.render(req.model_copy(update={"motion": base}))
 
@@ -481,14 +495,14 @@ def render_story(story: Story, character: Character, storage) -> str | None:
     return None
 
 
-# 긴 이야기의 쪽 동작 → 렌더 동작. 렌더는 순화 동작 두 가지뿐이다 (팔이 뭉개지는 문제, 2026-09-29).
-# idle 쪽은 렌더하지 않는다 — 프론트가 멈춘 그림을 보여 준다
+# 긴 이야기의 쪽 동작 → 렌더 동작 (2026-11-03 걷기 · 뛰기 · 춤 등록. 전에는 대부분 점프였다).
+# 팔이 뭉개지지 않는 것만 쓴다 (2026-09-29). idle 쪽은 렌더하지 않는다 — 프론트가 멈춘 그림
 PAGE_MOTIONS: dict[str, str | None] = {
     "wave": "wave_hello_gentle",
-    "walk": "jumping_gentle",
-    "run": "jumping_gentle",
+    "walk": "walk",
+    "run": "run",
     "jump": "jumping_gentle",
-    "dance": "jumping_gentle",
+    "dance": "dab_gentle",
     "idle": None,
 }
 # 쪽 음성을 동시에 몇 개까지 만드나. ElevenLabs 요금제마다 동시 요청 한도가 있다

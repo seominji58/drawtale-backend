@@ -9,26 +9,26 @@ from app.services.jobs import DEFAULT_MOTION, motion_for, render_with_fallback
 @pytest.mark.parametrize(
     "action,motion",
     [
-        # 행동 카드 16장 (pt_docs 05 S-07, 2026-10-28 4차). 뛰기 카드만 뛰기, 나머지는 손 흔들기
-        ("툭툭 털고 달려갔어요", "jumping_gentle"),
+        # 행동 카드 16장 (pt_docs 05 S-07, 2026-10-28 4차). 카드의 동작 열을 따른다 (2026-11-03)
+        ("툭툭 털고 달려갔어요", "run"),
         ("어른을 불렀어요", "wave_hello_gentle"),
-        ("천천히 다시 걸었어요", "wave_hello_gentle"),
+        ("천천히 다시 걸었어요", "walk"),
         ("잠깐 쉬며 기다렸어요", "wave_hello_gentle"),
-        ("다가가서 도와줬어요", "wave_hello_gentle"),
+        ("다가가서 도와줬어요", "walk"),
         ("손을 흔들어 웃게 했어요", "wave_hello_gentle"),
-        ("어른에게 달려갔어요", "jumping_gentle"),
+        ("어른에게 달려갔어요", "run"),
         ("옆에서 기다려 줬어요", "wave_hello_gentle"),
         ("그 자리에서 기다렸어요", "wave_hello_gentle"),
         ("어른에게 물어봤어요", "wave_hello_gentle"),
-        ("주위를 살피며 걸었어요", "wave_hello_gentle"),
-        ("표지판으로 달려갔어요", "jumping_gentle"),
+        ("주위를 살피며 걸었어요", "walk"),
+        ("표지판으로 달려갔어요", "run"),
         ("숨었어요", "wave_hello_gentle"),
-        ("밝은 곳으로 달려갔어요", "jumping_gentle"),
-        ("살금살금 걸어갔어요", "wave_hello_gentle"),
+        ("밝은 곳으로 달려갔어요", "run"),
+        ("살금살금 걸어갔어요", "walk"),
         ("가만히 기다렸어요", "wave_hello_gentle"),
         # earlier example phrases
         ("먼저 사과해요", "wave_hello_gentle"),
-        ("신나게 춤을 춰요", "jumping_gentle"),
+        ("신나게 춤을 춰요", "dab_gentle"),
     ],
 )
 def test_motion_for_frontend_choices(action, motion):
@@ -77,3 +77,20 @@ def test_other_ai_errors_are_not_swallowed():
     ai = _AI(set())
     with pytest.raises(AppError):
         render_with_fallback(ai, _req("wave_hello"))
+
+
+@pytest.mark.parametrize("motion", ["walk", "run", "dab_gentle"])
+def test_new_motions_fall_back_to_jump_when_ai_is_older(motion):
+    # 백엔드가 AI 보다 먼저 배포돼도 이야기가 실패하지 않는다 (2026-11-03)
+    ai = _AI({"jumping_gentle"})
+    assert render_with_fallback(ai, _req(motion)).content == b"mp4"
+    assert ai.asked == [motion, "jumping_gentle"]
+
+
+def test_page_motions_use_every_registered_motion():
+    from app.services.jobs import PAGE_MOTIONS, PRERENDER_MOTIONS
+
+    assert PAGE_MOTIONS["walk"] == "walk" and PAGE_MOTIONS["run"] == "run"
+    assert PAGE_MOTIONS["dance"] == "dab_gentle" and PAGE_MOTIONS["idle"] is None
+    # 쪽에 나오는 동작(손 흔들기는 미리보기가 맡는다)은 모두 미리 그려 둔다
+    assert {m for m in PAGE_MOTIONS.values() if m} - {"wave_hello_gentle"} <= set(PRERENDER_MOTIONS)
