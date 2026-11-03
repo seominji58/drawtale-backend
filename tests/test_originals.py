@@ -88,3 +88,26 @@ def test_purge_expired_originals(client, png_bytes):
     assert client.get(f"/api/v1/characters/{kept}").json()["image_url"] is not None
     assert client.get(f"/api/v1/characters/{fresh}").json()["image_url"] is not None
     assert purge_expired_originals() == 0
+
+
+def test_cutout_is_saved_and_deleted_with_original(client, png_bytes, monkeypatch):
+    """배경을 잘라 낸 정지 그림 (2026-11-03). 아이 그림 사본이라 원본과 함께 지운다."""
+
+    from app.services.ai_client import MockAIClient
+
+    class CutoutAI(MockAIClient):
+        def cutout(self, request_id):
+            return b"png-cutout"
+
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: CutoutAI(size))
+    cid = _upload(client, png_bytes)
+    url = client.get(f"/api/v1/characters/{cid}").json()["analysis"]["cutout_url"]
+    assert url and f"cutouts/{cid}.png" in url
+
+    assert client.delete(f"/api/v1/characters/{cid}/original").status_code == 204
+    assert client.get(f"/api/v1/characters/{cid}").json()["analysis"]["cutout_url"] is None
+
+
+def test_no_cutout_when_ai_has_none(client, png_bytes):
+    cid = _upload(client, png_bytes)
+    assert client.get(f"/api/v1/characters/{cid}").json()["analysis"]["cutout_url"] is None

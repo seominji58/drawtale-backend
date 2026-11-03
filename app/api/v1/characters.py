@@ -52,6 +52,7 @@ def to_response(character: Character) -> CharacterResponse:
         analysis = Analysis(
             bbox=BBox.model_validate(character.bbox),
             mask_url=storage.url(character.mask_blob_path),
+            cutout_url=storage.url(character.cutout_blob_path),
             joints=[AIJoint.model_validate(j) for j in character.ai_joints],
             confidence=character.detection_confidence,
             model_version=character.model_version,

@@ -80,6 +80,10 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
             character.coordinate_space = res.coordinate_space
             character.processing_time_ms = res.processing_time_ms
             character.status = JobStatus.succeeded
+            if res.request_id:
+                cutout = ai.cutout(res.request_id)
+                if cutout:
+                    character.cutout_blob_path = storage.save(f"cutouts/{character.id}.png", cutout)
             if wants_preview(character):
                 start_previews(character)
             _succeed(job)

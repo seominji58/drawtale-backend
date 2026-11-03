@@ -181,6 +181,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   "analysis": {
     "bbox": { "x": 80, "y": 60, "width": 240, "height": 480 },
     "mask_url": null,
+    "cutout_url": "https://…/files/cutouts/{id}.png?exp=…&sig=…",
     "joints": [ { "name": "hip", "x": 200.0, "y": 324.0, "score": 0.9 }, "... 15개" ],
     "confidence": 0.95,
     "model_version": "mock-v1",
@@ -203,6 +204,9 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 - Frontend 는 `confidence < 0.6` 이거나 `score < 0.4` 인 관절이 하나라도 있으면 어른 확인(S-05 「어른에게 도움 받기」)을 권하고, S-06 에서 그 관절을 따로 표시한다
 - `joints`: **현재 사용할 관절** — 사용자가 보정했으면 보정값, 아니면 AI 값. `score` 는 없다
 - `joints_corrected`: 사용자가 한 번이라도 보정했는지
+- `analysis.cutout_url` (2026-11-03): **배경을 투명하게 잘라 낸 캐릭터 PNG.** AI 가 분석할 때 만든다(3-4).
+  화면이 영상 대신 정지 그림을 보일 때(미리보기를 만드는 중 · 가만히 있는 쪽 · 완료 화면 · 책장 표지) 원본 대신 쓴다 —
+  원본은 사진 배경까지 나온다. 없으면(목 AI · 예전 분석) `null`. 원본을 지우면(2-10) 같이 지운다
 - `image_url`: 원본을 지웠으면 `null`. `original_deleted_at` 이 지운 때다
 - 분석 전(`pending`/`running`)에는 `analysis`, `joints`가 `null`
 - `preview_url` · `preview_status` (2026-10-08): **S-05 미리보기 MP4** — 분석 Job 이 `succeeded` 가 된 **뒤에** Backend 가 AI 렌더(3-3,

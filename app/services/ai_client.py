@@ -138,6 +138,18 @@ class HttpAIClient:
             raise AppError("AI_INVALID_RESPONSE", "AI 응답 형식이 올바르지 않아요.", 502) from e
         return normalize_analyze(raw)
 
+    def cutout(self, request_id: str) -> bytes | None:
+        """분석할 때 만들어 둔, 배경을 잘라 낸 PNG. 없거나 실패하면 None (원본으로 대신한다)."""
+
+        try:
+            res = self.client.get(f"/internal/v1/sessions/{request_id}/cutout")
+        except httpx.HTTPError:
+            log.warning("could not fetch cutout for %s", request_id)
+            return None
+        if res.status_code != 200 or not res.headers.get("content-type", "").startswith("image/"):
+            return None
+        return res.content
+
     def render(self, req: RenderRequest) -> RenderResult:
         """성공하면 MP4 본문이, 실패하면 JSON 오류가 돌아온다."""
 
@@ -199,6 +211,9 @@ class MockAIClient:
         self.image_size = image_size
 
     def delete_session(self, request_id: str) -> None:
+        return None
+
+    def cutout(self, request_id: str) -> bytes | None:
         return None
 
     def analyze(self, image: bytes, filename: str) -> AnalyzeResult:

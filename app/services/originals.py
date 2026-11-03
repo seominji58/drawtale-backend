@@ -6,7 +6,7 @@
 보관하지 않는 그림은 `original_retention_hours` 가 지나면 여기서 지운다.
 
 지우는 것: 업로드 파일, AI 서버 세션(원본 사본과 마스크), S-05 미리보기 MP4,
-미리 렌더한 쪽 동작 MP4.
+미리 렌더한 쪽 동작 MP4, 배경을 잘라 낸 캐릭터 PNG.
 남기는 것: 관절 좌표, 이야기 문장 · 음성 · MP4. MP4 는 그림을 움직인 결과라 이야기와 함께 둔다.
 """
 
@@ -35,6 +35,8 @@ def delete_original(db: Session, character: Character) -> None:
     storage = get_storage()
     storage.delete(character.upload_blob_path)
     storage.delete(character.preview_blob_path)
+    storage.delete(character.cutout_blob_path)
+    character.cutout_blob_path = None
     for path in (character.motion_clips or {}).values():
         storage.delete(path)
     character.preview_blob_path = character.preview_status = character.motion_clips = None

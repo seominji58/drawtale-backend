@@ -34,6 +34,10 @@ class Character(IdMixin, TimestampMixin, Base):
     # 캐릭터 검출 점수 (0~1). 낮으면 프론트가 어른 확인을 권한다 (S-05-05)
     detection_confidence: Mapped[float | None] = mapped_column(Float, default=None)
     mask_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
+    # 배경을 투명하게 잘라 낸 캐릭터 PNG (AI 가 분석할 때 만든다, 2026-11-03).
+    # 화면이 영상 대신 정지 그림을 보일 때 쓴다 — 원본을 쓰면 사진 배경까지 나왔다.
+    # 아이 그림 사본이라 원본을 지우면 같이 지운다
+    cutout_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
     # S-05 미리보기 MP4 (Meta 렌더, 분석 직후와 관절 보정 뒤). 원본을 지우면 같이 지운다
     preview_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
     # rendering | ready | failed. 미리보기를 만들지 않으면(목 AI, 원본 지움) 없다

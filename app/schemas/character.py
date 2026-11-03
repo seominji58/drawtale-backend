@@ -15,6 +15,9 @@ class CharacterCreateResponse(BaseModel):
 class Analysis(BaseModel):
     bbox: BBox
     mask_url: str | None
+    cutout_url: str | None = Field(
+        default=None, description="배경을 투명하게 잘라 낸 캐릭터 PNG. 없으면 원본 (2026-11-03)"
+    )
     # AI 가 처음 짚은 관절. 관절마다 score 가 있다 (예전 분석이면 null)
     joints: list[AIJoint]
     confidence: float | None = Field(
