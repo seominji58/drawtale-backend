@@ -328,3 +328,23 @@ def test_book_response_has_sprite_url():
     assert pages[0]["sprite_url"] and "walk.sprite.webp" in pages[0]["sprite_url"]
     assert pages[1]["sprite_url"] is None
     assert "sprite_blob_path" not in pages[0]
+
+
+def test_book_schema_keeps_sprite_and_scene():
+    """응답 스키마가 화면 장면 층에 필요한 값을 버리지 않는다 (2026-11-03 — 빠져서 장면 층이 안 켜졌음)."""
+    from app.api.v1.stories import book_response
+    from app.schemas.story import Book
+
+    storage = get_storage()
+    book = {"title": "t", "order_pages": [1], "character_sheet": {"친구": "a girl"},
+            "pages": [{"page": 1, "stage": "place", "action": "walk", "text": "a", "lines": [],
+                       "sprite_blob_path": "results/x/walk.sprite.webp",
+                       "sprite_frames": 36, "sprite_box": [0.1, 0.2, 0.8, 0.9],
+                       "scene": {"hero_on_page": True, "characters": [{"name": "친구", "slot": "right-middle"}],
+                                 "background": "b", "location": "school-hallway"}}]}
+    out = Book.model_validate(book_response(book, storage)).model_dump()
+    p = out["pages"][0]
+    assert p["sprite_frames"] == 36 and p["sprite_box"] == [0.1, 0.2, 0.8, 0.9]
+    assert p["scene"]["location"] == "school-hallway"
+    assert p["scene"]["characters"][0]["name"] == "친구"
+    assert out["character_sheet"] == {"친구": "a girl"}

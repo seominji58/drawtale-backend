@@ -122,6 +122,18 @@ class BookLine(BaseModel):
     emotion: str = ""
 
 
+class BookSceneCharacter(BaseModel):
+    name: str
+    slot: str = Field(description="right-middle · right-bottom")
+
+
+class BookScene(BaseModel):
+    hero_on_page: bool = True
+    characters: list[BookSceneCharacter] = Field(default_factory=list)
+    background: str = ""
+    location: str = Field(default="", description="장소 안 세부 장소 id (SCENE_LOCATIONS). 비면 화면이 글로 짐작")
+
+
 class BookPage(BaseModel):
     page: int
     stage: Stage
@@ -150,6 +162,17 @@ class BookPage(BaseModel):
             "층으로 쌓는다. 예전 이야기 · 예전 AI 서버면 없다(MP4 로)"
         ),
     )
+    sprite_frames: int | None = Field(
+        default=None,
+        description="sprite_url 의 실제 프레임 수 (마지막 줄 빈 칸 제외). 화면이 다른 주소 그림의 픽셀을 못 읽어 서버가 알려 준다",
+    )
+    sprite_box: list[float] | None = Field(
+        default=None,
+        description="첫 프레임에서 그림이 차지하는 자리 [왼, 위, 오른, 아래] — 칸 대비 0~1. 발끝 맞추기 · 크기 맞추기에 쓴다",
+    )
+    scene: BookScene | None = Field(
+        default=None, description="대본이 정한 장면 계획. 저장해 둔 카드 이야기 · 예전 이야기는 없을 수 있다"
+    )
 
 
 class Book(BaseModel):
@@ -157,6 +180,9 @@ class Book(BaseModel):
     pages: list[BookPage]
     order_pages: list[int] = Field(
         description="S-10 순서 맞추기에 쓸 쪽 번호. 장소 · 문제 · 행동 · 결과 순"
+    )
+    character_sheet: dict[str, str] = Field(
+        default_factory=dict, description="장면에 나오는 인물 이름 → 영어 생김새 (쪽마다 같은 모습)"
     )
 
 
