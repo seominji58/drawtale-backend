@@ -12,7 +12,8 @@ class Settings(BaseSettings):
 
     ai_service_url: str = "http://127.0.0.1:8001"
     ai_use_mock: bool = True
-    ai_timeout_seconds: float = 60
+    # AI 는 렌더를 한 번에 하나씩 한다 — 다른 사람 렌더를 기다리는 시간까지 (drawtale-ai main.RENDER_LOCK)
+    ai_timeout_seconds: float = 120
     rate_limit_enabled: bool = True
 
     public_base_url: str = "http://127.0.0.1:8000"

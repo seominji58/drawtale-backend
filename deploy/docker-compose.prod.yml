@@ -77,8 +77,9 @@ services:
     depends_on:
       torchserve:
         condition: service_healthy
-    # 실측 최대 1.1GB (2026-10-13, 로컬 리허설). 여유를 두고 2GB
-    mem_limit: 2g
+    # 실측: 평소 약 0.8GB + 렌더 한 번 약 1GB 더 (2026-11-03 VM). 렌더는 한 번에 하나만 돈다(main.RENDER_LOCK).
+    # 2GB 에서는 렌더 둘이 겹치면 서버가 죽었다 — 여유를 두고 2.5GB
+    mem_limit: 2560m
 
   torchserve:
     build:
