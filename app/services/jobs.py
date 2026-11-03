@@ -186,7 +186,8 @@ def save_clip(storage, path: str, result: RenderResult) -> str:
     saved = storage.save(path, result.content)
     if result.sprite:
         storage.save(sprite_path_for(saved), result.sprite)
-        meta = {"frames": result.sprite_frames, "box": result.sprite_box or [0, 0, 1, 1]}
+        meta = {"frames": result.sprite_frames, "box": result.sprite_box or [0, 0, 1, 1],
+                "in_place": result.sprite_in_place}
         storage.save(sprite_meta_path(saved), json.dumps(meta).encode())
     return saved
 
@@ -198,6 +199,23 @@ def read_sprite_meta(storage, mp4_path: str) -> dict | None:
         return {"frames": int(meta["frames"]), "box": [float(v) for v in meta["box"]][:4]}
     except Exception:  # noqa: BLE001
         return None
+
+
+# 몸 전체가 옆으로 가는 동작. 예전 AI 는 이 이동을 렌더 칸 안에 그대로 그려 칸 끝을 넘었다(잘림).
+# 묶음 정보에 in_place 가 없는 이 동작은 이야기를 만들 때 한 번 다시 렌더해 캐릭터 쪽 것도 바꿔 둔다 (2026-11-03)
+TRAVEL_MOTIONS = {"walk", "run"}
+
+
+def sprite_needs_rerender(storage, mp4_path: str, motion: str) -> bool:
+    """예전 AI 가 만든(제자리가 아닌) 걷기 · 뛰기 묶음인지. 묶음이 없는 것은 해당 없음"""
+    if motion not in TRAVEL_MOTIONS:
+        return False
+    try:
+        meta = json.loads(storage.read(sprite_meta_path(mp4_path)))
+    except Exception:  # noqa: BLE001
+        return False
+    # 다시 렌더했는데 AI 가 아직 예전 판이었으면 표시해 두고 이야기마다 되풀이하지 않는다
+    return not meta.get("in_place") and not meta.get("old_ai")
 
 
 def copy_clip(storage, src: str, dst: str) -> tuple[str, bool]:
@@ -620,6 +638,13 @@ def make_page_clips(
     for motion in sorted(needed):
         try:
             dst = f"results/{story.id}/{motion}.mp4"
+            if ready.get(motion) and can_render and sprite_needs_rerender(storage, ready[motion], motion):
+                result = render_clip(character, motion)
+                if result.content and result.sprite and result.sprite_in_place:
+                    save_clip(storage, ready[motion], result)  # 캐릭터 쪽 것을 바꿔 다음 이야기는 복사만
+                else:
+                    meta = json.loads(storage.read(sprite_meta_path(ready[motion])))
+                    storage.save(sprite_meta_path(ready[motion]), json.dumps({**meta, "old_ai": True}).encode())
             if ready.get(motion):
                 # 미리 만든 영상(과 투명 프레임 묶음)을 복사한다.
                 # 관절을 고치면 캐릭터 쪽 영상은 지워지므로 이야기에 따로 둔다

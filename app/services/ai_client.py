@@ -174,6 +174,7 @@ class HttpAIClient:
                 sprite=base64.b64decode(body["sprite"]) if body.get("sprite") else None,
                 sprite_frames=int(body.get("sprite_frames") or 0),
                 sprite_box=body.get("sprite_box"),
+                sprite_in_place=bool(body.get("sprite_in_place")),
                 processing_time_ms=int(res.headers.get("X-Processing-Time-Ms", 0)),
                 model_version=res.headers.get("X-Model-Version", UNKNOWN),
             )

@@ -348,3 +348,55 @@ def test_book_schema_keeps_sprite_and_scene():
     assert p["scene"]["location"] == "school-hallway"
     assert p["scene"]["characters"][0]["name"] == "친구"
     assert out["character_sheet"] == {"친구": "a girl"}
+
+
+class InPlaceAI(SpriteAI):
+    """걷기 · 뛰기를 제자리로 렌더하는 AI (drawtale-ai 11/3 저녁)"""
+
+    def render(self, req):
+        r = super().render(req)
+        r.sprite_in_place = True
+        return r
+
+
+def test_old_travel_sprite_rerendered_once(monkeypatch):
+    """예전 AI 의 걷기 묶음(칸 밖으로 흘러가 잘림)은 이야기 만들 때 다시 렌더해 캐릭터 쪽도 바꾼다"""
+    ai = InPlaceAI()
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
+    storage = get_storage()
+    for m in ("walk", "dab_gentle"):
+        storage.save(f"previews/s2-{m}.mp4", b"old")
+        storage.save(f"previews/s2-{m}.sprite.webp", b"old-sprite")
+        storage.save(f"previews/s2-{m}.sprite.json", b'{"frames": 12, "box": [0, 0, 1, 1]}')
+    character = _character(preview_blob_path=None, motion_clips={"walk": "previews/s2-walk.mp4",
+                                                                 "dab_gentle": "previews/s2-dab_gentle.mp4"})
+    pages = [Page(1, "place", "walk", [(NARRATOR, "a", "")]), Page(2, "result", "dance", [(NARRATOR, "b", "")])]
+    sprites: set[str] = set()
+    clips = jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1, 2]), sprites)
+    # 걷기만 다시 (춤은 제자리 동작이라 예전 것 그대로)
+    assert [m for m, _ in ai.motions] == ["walk"]
+    assert storage.read(jobs.sprite_path_for(clips["walk"])) == b"webp:walk"
+    assert storage.read("previews/s2-walk.sprite.webp") == b"webp:walk"
+    assert storage.read(jobs.sprite_path_for(clips["dab_gentle"])) == b"old-sprite"
+    # 다음 이야기는 복사만
+    ai.motions.clear()
+    jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1, 2]), set())
+    assert ai.motions == []
+
+
+def test_old_ai_rerender_tried_once(monkeypatch):
+    """AI 가 아직 예전 판(제자리 표시 없음)이면 한 번만 시도하고 이야기마다 되풀이하지 않는다"""
+    ai = SpriteAI()
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
+    storage = get_storage()
+    storage.save("previews/s3-walk.mp4", b"old")
+    storage.save("previews/s3-walk.sprite.webp", b"old-sprite")
+    storage.save("previews/s3-walk.sprite.json", b'{"frames": 12, "box": [0, 0, 1, 1]}')
+    character = _character(preview_blob_path=None, motion_clips={"walk": "previews/s3-walk.mp4"})
+    pages = [Page(1, "place", "walk", [(NARRATOR, "a", "")])]
+    clips = jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1]), set())
+    assert [m for m, _ in ai.motions] == ["walk"]
+    assert storage.read(jobs.sprite_path_for(clips["walk"])) == b"old-sprite"
+    ai.motions.clear()
+    jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1]), set())
+    assert ai.motions == []

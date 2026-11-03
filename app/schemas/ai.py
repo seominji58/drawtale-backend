@@ -100,5 +100,7 @@ class RenderResult(BaseModel):
     sprite_frames: int = 0
     # 첫 장에서 그림이 차지하는 자리 [left, top, right, bottom] (칸 대비 0~1)
     sprite_box: list[float] | None = None
+    # 걷기 · 뛰기를 제자리로 렌더했는지 (AI 11/3 저녁부터 true). 화면이 주인공을 옮기므로 제자리여야 칸 밖으로 안 잘린다
+    sprite_in_place: bool = False
     processing_time_ms: int = 0
     model_version: str = UNKNOWN
