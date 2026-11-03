@@ -63,3 +63,11 @@ def png_bytes() -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (400, 600), "white").save(buf, format="PNG")
     return buf.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def _no_tts_retry_wait(monkeypatch):
+    """음성 재시도 사이 쉬는 시간은 테스트에서 0 (실패를 흉내 내는 테스트가 느려지지 않게)."""
+    from app.services import jobs
+
+    monkeypatch.setattr(jobs, "TTS_RETRY_SECONDS", 0.0)

@@ -441,3 +441,22 @@ def test_story_waits_only_for_needed_motions(monkeypatch):
     db = FakeDB(jump_done)
     jobs.wait_for_motion_clips(db, character, {"walk", "jumping_gentle"})
     assert db.refreshes == 2 and character.motion_clips["run"] == jobs.PENDING
+
+
+def test_page_audio_retries_before_giving_up(monkeypatch):
+    """쪽 음성이 한두 번 실패해도 다시 만든다 — 실패한 쪽에 브라우저 기계 음성이 끼지 않게 (2026-11-03)."""
+    monkeypatch.setattr(jobs.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    class Flaky:
+        def speak(self, text):
+            calls["n"] += 1
+            if calls["n"] % 3 != 0:   # 쪽마다 두 번 실패하고 세 번째에 된다
+                raise RuntimeError("429")
+            return b"ID3"
+
+    monkeypatch.setattr(jobs, "get_tts", lambda voice=None: Flaky())
+    monkeypatch.setattr(jobs, "PAGE_AUDIO_WORKERS", 1)
+    book = Book("숲", PAGES, [1, 2, 3, 5])
+    paths = jobs.make_page_audio(_story(), get_storage(), book)
+    assert all(paths) and calls["n"] == 3 * len(PAGES)

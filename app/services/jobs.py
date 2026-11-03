@@ -544,12 +544,12 @@ def make_audio(story: Story, storage, script: Script | None = None) -> str | Non
                 voices = cast_voices(
                     script.cast, story.protagonist_voice, tts.voice_id, (ln.speaker for ln in lines)
                 )
-                audio = tts.dialogue(lines, voices)
+                audio = _tts_retry(lambda: tts.dialogue(lines, voices))
                 story.voice_cast = voices
             except Exception:
                 log.exception("캐릭터 목소리 실패, 나레이터 목소리로 읽습니다")
         if audio is None:
-            audio = tts.speak(story.text)
+            audio = _tts_retry(lambda: tts.speak(story.text))
         return storage.save(f"results/{story.id}.mp3", audio)
     except Exception:
         log.exception("음성 생성 실패, 음성 없이 진행합니다")
@@ -610,6 +610,26 @@ PAGE_MOTIONS: dict[str, str | None] = {
 PAGE_AUDIO_WORKERS = 3
 
 
+# 음성 한 번 실패하면 쉬었다 다시 (ElevenLabs 동시 요청 한도 · 잠깐의 오류). 실패한 쪽은 화면이 읽지 않으므로
+# (브라우저 기계 음성이 이야기 중간에 끼던 것, 11/3 사용자 「중간에 가끔 다른 tts 나올 때 있는데 막아줘」) 최대한 만든다
+TTS_TRIES = 3
+TTS_RETRY_SECONDS = 2.0
+
+
+def _tts_retry(make):  # noqa: ANN001
+    """make() 를 TTS_TRIES 번까지. 마지막 실패는 그대로 올린다."""
+
+    for attempt in range(TTS_TRIES):
+        try:
+            return make()
+        except Exception:
+            if attempt == TTS_TRIES - 1:
+                raise
+            log.warning("음성 만들기 실패 — %.0f초 뒤 다시 (%d/%d)", TTS_RETRY_SECONDS * (attempt + 1), attempt + 2, TTS_TRIES)
+            time.sleep(TTS_RETRY_SECONDS * (attempt + 1))
+    return None
+
+
 def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
     """쪽마다 MP3. 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다 (음성 비용이 늘지 않는다).
 
@@ -632,12 +652,12 @@ def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
     def one(page) -> str | None:
         try:
             if voices and any(s != NARRATOR for s, _, _ in page.lines):
-                audio = tts.dialogue([Line(s, t, e) for s, t, e in page.lines], voices)
+                audio = _tts_retry(lambda: tts.dialogue([Line(s, t, e) for s, t, e in page.lines], voices))
             else:
-                audio = tts.speak(page.text())
+                audio = _tts_retry(lambda: tts.speak(page.text()))
             return storage.save(f"results/{story.id}/page{page.page:02d}.mp3", audio)
         except Exception:
-            log.exception("%d쪽 음성 실패, 그 쪽은 브라우저가 읽습니다", page.page)
+            log.exception("%d쪽 음성 %d번 실패, 그 쪽은 음성 없이 (화면은 읽지 않는다)", page.page, TTS_TRIES)
             return None
 
     with ThreadPoolExecutor(PAGE_AUDIO_WORKERS) as ex:
