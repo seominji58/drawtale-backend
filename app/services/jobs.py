@@ -133,6 +133,8 @@ ACTION_MOTIONS: dict[str, str] = {
     "사과": "wave_hello_gentle",
 }
 DEFAULT_MOTION = "wave_hello_gentle"
+# 렌더 동작 → 쪽 동작 이름 (화면 S-09 장면 층이 쓰는 이름, PAGE_MOTIONS 의 반대)
+MOTION_ACTION = {"run": "run", "walk": "walk", "jumping_gentle": "jump", "dab_gentle": "dance", "wave_hello_gentle": "wave"}
 
 # S-05 미리보기. 브라우저 조각 애니메이션은 그림을 네모로 잘라 붙인 것처럼 보여서
 # (사용자, 2026-10-08) 분석 직후 Meta 로 렌더해 둔다.
@@ -549,7 +551,23 @@ def make_audio(story: Story, storage, script: Script | None = None) -> str | Non
 
 
 def render_story(story: Story, character: Character, storage) -> str | None:
-    """짧은 이야기의 영상 하나. 행동 문구로 동작을 고른다."""
+    """짧은 이야기의 영상 하나. 행동 문구로 동작을 고른다.
+
+    캐릭터를 만든 직후 미리 렌더한 그 동작(과 투명 프레임 묶음)이 있으면 복사한다 — 긴 이야기와 같이
+    S-09 장면 층으로 보이게 (2026-11-03 사용자 「짧은 쪽 이야기에는 지금까지 개발한 것들이 적용 안 된 거 같은데」).
+    없으면 렌더해서 영상 옆에 묶음도 둔다."""
+
+    motion = motion_for(story.action)
+    ready = dict(character.motion_clips or {})
+    if character.preview_blob_path:
+        ready[DEFAULT_MOTION] = character.preview_blob_path
+    can_render = bool(character.ai_request_id) and character.original_deleted_at is None
+    if ready.get(motion) and not (can_render and sprite_needs_rerender(storage, ready[motion], motion)):
+        try:
+            path, _ = copy_clip(storage, ready[motion], f"results/{story.id}/{motion}.mp4")
+            return path
+        except Exception:  # noqa: BLE001
+            log.exception("짧은 이야기 %s: 미리 만든 %s 영상을 복사하지 못해 렌더합니다", story.id, motion)
 
     ai = get_ai_client((character.image_width, character.image_height))
     result = None
@@ -563,7 +581,7 @@ def render_story(story: Story, character: Character, storage) -> str | None:
             ),
         )
     if result and result.content:
-        return storage.save(f"results/{story.id}.mp4", result.content)
+        return save_clip(storage, f"results/{story.id}/{motion}.mp4", result)
     if character.original_deleted_at is None:
         # Mock AI, or analysis done before the AI kept a session: show the drawing.
         return character.upload_blob_path
@@ -755,6 +773,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     if shared_audio
                     else make_audio(story, storage, script)
                 )
+                wait_for_motion_clips(db, character)
                 story.animation_blob_path = render_story(story, character, storage)
             else:
                 script = (
@@ -762,6 +781,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 )
                 story.text = script_text(script) if script else write_story_text(story)
                 story.audio_blob_path = make_audio(story, storage, script)
+                wait_for_motion_clips(db, character)
                 story.animation_blob_path = render_story(story, character, storage)
 
             story.still_blob_path = copy_still(story, character, storage)

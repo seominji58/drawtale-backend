@@ -400,3 +400,25 @@ def test_old_ai_rerender_tried_once(monkeypatch):
     ai.motions.clear()
     jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1]), set())
     assert ai.motions == []
+
+
+def test_short_story_copies_prerendered_clip_with_sprite(monkeypatch):
+    """짧은 이야기도 미리 만든 동작(과 투명 프레임 묶음)을 복사한다 — 화면이 장면 층으로 (2026-11-03)."""
+    ai = InPlaceAI()
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
+    storage = get_storage()
+    storage.save("previews/s4-run.mp4", b"run")
+    storage.save("previews/s4-run.sprite.webp", b"run-sprite")
+    storage.save("previews/s4-run.sprite.json", b'{"frames": 36, "box": [0.1, 0.2, 0.8, 0.9], "in_place": true}')
+    story = _story(action="밝은 곳으로 달려갔어요")
+    path = jobs.render_story(story, _character(motion_clips={"run": "previews/s4-run.mp4"}), storage)
+    assert ai.motions == []   # 렌더하지 않고 복사
+    assert path.endswith("/run.mp4")
+    assert storage.read(jobs.sprite_path_for(path)) == b"run-sprite"
+    assert jobs.read_sprite_meta(storage, path)["frames"] == 36
+    # 미리 만든 것이 없으면 렌더하고 묶음도 옆에 둔다
+    story2 = _story(action="친구와 춤을 췄어요")
+    path2 = jobs.render_story(story2, _character(motion_clips={}), storage)
+    assert [m for m, _ in ai.motions] == ["dab_gentle"]
+    assert storage.read(jobs.sprite_path_for(path2)) == b"webp:dab_gentle"
+    assert jobs.MOTION_ACTION[jobs.motion_for(story2.action)] == "dance"

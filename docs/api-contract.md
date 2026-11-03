@@ -352,6 +352,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 | `animation_url` | AI 서버가 렌더한 MP4 (3-3). 동작은 `action` 으로 고른다 (4번 표 6) | 목 AI 면 원본 그림 URL |
 
 `book` (2026-10-12) — `length=long` 일 때만. `text` 는 쪽 글을 이어 붙인 것이다.
+**짧은 이야기 프레임 묶음 (2026-11-03 밤)** — 짧은 이야기(`book` 없음)도 이야기 응답에 `sprite_url` · `sprite_frames` · `sprite_box`(animation_url 동작의 투명 프레임 묶음, 없으면 `null`)와 `action_motion`(행동 카드의 동작 `walk · run · jump · dance · wave`)이 온다. 캐릭터를 만든 직후 미리 렌더한 그 동작을 복사한다(없으면 렌더). 화면은 짧은 이야기도 문장을 네 쪽으로 나눠 긴 이야기와 같은 장면 층으로 보인다.
+
 **투명 프레임 묶음 · 세부 장소 (2026-11-03)** — 쪽에 `sprite_url`(바탕이 투명한 WebP — 정사각 칸 · 가로 늘 8칸, 남는 칸 투명), `sprite_frames`(장 수), `sprite_box`(첫 장에서 그림이 차지하는 자리 `[left, top, right, bottom]`, 칸 대비 0~1)가 온다. 같은 렌더에서 MP4 와 함께 나온다(AI `sprite=true`). 걷기 · 뛰기도 **제자리**로 그린다(2026-11-03 저녁 — 옮기는 것은 화면이 그림 칸째, 렌더의 걸음 속도에 맞춰). 프론트 S-09 가 장면 배경 · 물건 · 인물과 층으로 쌓는다. 예전 이야기 · 예전 AI 는 없음(`null`) — 그때는 MP4. 장 수 · 자리를 서버가 주는 것은 화면이 다른 주소 그림의 픽셀을 못 읽어서(CORS)다. `scene.location` 은 장소 안 세부 장소 id(`school-cafeteria` 등, `app/services/book.py` SCENE_LOCATIONS — 프론트 `public/scenes/{id}` 와 같은 목록). 대본이 쪽마다 고르고, 모르면 `""`.
 
 **쪽마다 음성 · 동작 (2026-10-12)** — 쪽마다 `audio_url`(MP3)과 `animation_url`(MP4)이 온다. 긴 이야기는 이야기 전체 `audio_url` 을 만들지 않는다(`null`).

@@ -217,6 +217,14 @@ class StoryResponse(BaseModel):
         default=None,
         description="배경을 잘라 낸 캐릭터 정지 그림. 영상이 없는 쪽 · 완료 화면 · 표지",
     )
+    sprite_url: str | None = Field(
+        default=None, description="짧은 이야기: animation_url 동작의 바탕이 투명한 프레임 묶음 (긴 이야기는 쪽마다 book.pages)"
+    )
+    sprite_frames: int | None = Field(default=None, description="sprite_url 의 장 수")
+    sprite_box: list[float] | None = Field(default=None, description="sprite_url 첫 장의 그림 자리 [왼, 위, 오른, 아래] 0~1")
+    action_motion: str = Field(
+        default="wave", description="행동 카드의 동작 (walk · run · jump · dance · wave) — 짧은 이야기를 쪽으로 나눠 보일 때 행동 쪽 동작"
+    )
     created_at: datetime
     updated_at: datetime
 

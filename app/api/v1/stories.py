@@ -22,7 +22,7 @@ from app.schemas.story import (
     StoryCreateResponse,
     StoryResponse,
 )
-from app.services.jobs import run_story_job
+from app.services.jobs import MOTION_ACTION, motion_for, read_sprite_meta, run_story_job, sprite_path_for
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -125,6 +125,9 @@ def get_story(
 ) -> StoryResponse:
     story = owned_story(db, story_id, user)
     storage = get_storage()
+    # 짧은 이야기의 동작 영상 옆 투명 프레임 묶음 (2026-11-03) — 화면이 긴 이야기처럼 장면 층으로 쌓는다
+    clip = story.animation_blob_path if (story.animation_blob_path or "").endswith(".mp4") else None
+    meta = read_sprite_meta(storage, clip) if clip and not story.book else None
     return StoryResponse(
         id=story.id,
         character_id=story.character_id,
@@ -143,6 +146,10 @@ def get_story(
         audio_url=storage.url(story.audio_blob_path),
         animation_url=storage.url(story.animation_blob_path),
         still_url=storage.url(story.still_blob_path),
+        sprite_url=storage.url(sprite_path_for(clip)) if meta else None,
+        sprite_frames=meta["frames"] if meta else None,
+        sprite_box=meta["box"] if meta else None,
+        action_motion=MOTION_ACTION.get(motion_for(story.action), "wave"),
         created_at=story.created_at,
         updated_at=story.updated_at,
     )
