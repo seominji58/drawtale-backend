@@ -384,7 +384,7 @@ class StoryWriter:
         if name:
             self.check_input(name)
 
-        system = book_prompt(pages, characters, name, extras)
+        system = book_prompt(pages, characters, name, extras, place=choices.get("place"))
         # 아이 입력이 걸리면 위에서 막는다(StoryBlocked). AI 가 쓴 글이 걸리면 아이 탓이 아니므로
         # 다시 쓰게 하고, 끝내 걸리면 OpenAIError — 부르는 쪽이 틀 문장 그림책으로 대신한다
         # (「넘어졌어요」 이야기의 대본이 violence 로 걸린 적 있음, 2026-10-12)

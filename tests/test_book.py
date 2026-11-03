@@ -336,3 +336,22 @@ def test_book_falls_back_to_openai_when_claude_fails(monkeypatch):
     book = w.write_book(CHOICES, set(), 7, False)
     assert used == ["gpt-5.4-mini"]
     assert len(book.pages) == 7
+
+
+def test_scene_location_kept_and_cleaned():
+    scene = _scene(
+        GOOD,
+        {},
+        p1={"location": "school-cafeteria"},
+        p2={"location": "School-Hallway "},
+        p3={"location": "급식실"},   # id 가 아니면 버린다 — 화면이 background 낱말로 짐작한다
+    )
+    book = parse_book(_raw(GOOD, scene=scene))
+    assert [p.scene.location for p in book.pages[:3]] == ["school-cafeteria", "school-hallway", ""]
+    assert book.to_json()["pages"][0]["scene"]["location"] == "school-cafeteria"
+
+
+def test_prompt_lists_locations_for_card_place():
+    assert "school-cafeteria(급식실)" in book_prompt(8, False, None, place="학교")
+    # 말로 정한 장소(카드에 없음)는 비워 두게
+    assert 'location 은 "" 로 둔다' in book_prompt(8, False, None, place="할머니 댁")

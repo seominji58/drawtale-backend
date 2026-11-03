@@ -83,6 +83,10 @@ class RenderRequest(BaseModel):
     # /internal/v1/render 는 request_id · joints · motion 만 받는다 (2026-10-20 확인).
     # 동작 파일이 짧아져 상한 없이도 8초 안팎이라 급하지 않다
     max_frames: int | None = None
+    # 같은 렌더의 투명 프레임 묶음(WebP)도 받는다 (2026-11-03) —
+    # 프론트 S-09 가 장면 배경 · 물건과 층으로 쌓는다.
+    # 예전 AI 서버는 이 항목을 몰라 MP4 만 준다 → sprite 없음
+    sprite: bool = True
 
 
 class RenderResult(BaseModel):
@@ -90,5 +94,11 @@ class RenderResult(BaseModel):
 
     content: bytes
     content_type: str = "video/mp4"
+    # 바탕이 투명한 프레임 묶음(WebP). 정사각 칸을 가로 8칸씩 줄 바꿔 늘어놓았다.
+    # 없으면 None
+    sprite: bytes | None = None
+    sprite_frames: int = 0
+    # 첫 장에서 그림이 차지하는 자리 [left, top, right, bottom] (칸 대비 0~1)
+    sprite_box: list[float] | None = None
     processing_time_ms: int = 0
     model_version: str = UNKNOWN

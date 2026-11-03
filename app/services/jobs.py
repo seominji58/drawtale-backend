@@ -12,7 +12,7 @@ from app.core.errors import AppError
 from app.db import session as db_session
 from app.models import Character, Job, Story
 from app.models.mixins import utcnow
-from app.schemas.ai import RenderRequest
+from app.schemas.ai import RenderRequest, RenderResult
 from app.schemas.common import JobStatus, Joint
 from app.schemas.story import StoryLength, VoiceMode
 from app.services import card_stories
@@ -157,17 +157,67 @@ def make_preview(character: Character, storage) -> str | None:
     if not character.ai_request_id:
         return None
     try:
-        content = render_clip(character, DEFAULT_MOTION)
+        result = render_clip(character, DEFAULT_MOTION)
     except Exception:
         log.exception("미리보기 렌더 실패, 브라우저 애니메이션으로 대신합니다")
         return None
-    if not content:  # 목 AI
+    if not result.content:  # 목 AI
         return None
-    return storage.save(f"previews/{character.id}-{uuid.uuid4().hex[:8]}.mp4", content)
+    return save_clip(storage, f"previews/{character.id}-{uuid.uuid4().hex[:8]}.mp4", result)
 
 
-def render_clip(character: Character, motion: str) -> bytes:
-    """짧은 동작 영상 (미리보기 · 쪽 동작). 동작 전체에서 PREVIEW_MAX_FRAMES 만 골라 그린다."""
+def sprite_path_for(mp4_path: str) -> str:
+    """동작 영상 옆에 두는 투명 프레임 묶음 경로 (`walk.mp4` → `walk.sprite.webp`).
+
+    따로 칸을 두지 않고 이름으로 잇는다 — 캐릭터의 motion_clips · 쪽의 animation_blob_path
+    그대로 찾는다"""
+    return mp4_path.rsplit(".", 1)[0] + ".sprite.webp"
+
+
+def sprite_meta_path(mp4_path: str) -> str:
+    """프레임 묶음의 장 수 · 그림 자리 (`walk.sprite.json`).
+
+    화면은 다른 주소 그림의 픽셀을 못 읽어서(CORS) 서버가 쪽 정보로 준다"""
+    return mp4_path.rsplit(".", 1)[0] + ".sprite.json"
+
+
+def save_clip(storage, path: str, result: RenderResult) -> str:
+    """MP4 를 저장하고, 투명 프레임 묶음이 있으면 옆에 같이 저장한다. MP4 경로를 준다."""
+    saved = storage.save(path, result.content)
+    if result.sprite:
+        storage.save(sprite_path_for(saved), result.sprite)
+        meta = {"frames": result.sprite_frames, "box": result.sprite_box or [0, 0, 1, 1]}
+        storage.save(sprite_meta_path(saved), json.dumps(meta).encode())
+    return saved
+
+
+def read_sprite_meta(storage, mp4_path: str) -> dict | None:
+    """저장해 둔 묶음 정보. 없거나 깨졌으면 None (화면은 영상으로)"""
+    try:
+        meta = json.loads(storage.read(sprite_meta_path(mp4_path)))
+        return {"frames": int(meta["frames"]), "box": [float(v) for v in meta["box"]][:4]}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def copy_clip(storage, src: str, dst: str) -> tuple[str, bool]:
+    """미리 만든 동작 영상(과 프레임 묶음)을 이야기 폴더로 복사한다.
+
+    (영상 경로, 묶음도 복사했는지)를 돌려준다.
+    프레임 묶음이 없으면(예전 그림 · 예전 AI 서버) 영상만"""
+    saved = storage.save(dst, storage.read(src))
+    try:
+        storage.save(sprite_path_for(saved), storage.read(sprite_path_for(src)))
+        storage.save(sprite_meta_path(saved), storage.read(sprite_meta_path(src)))
+        return saved, True
+    except Exception:  # noqa: BLE001
+        return saved, False
+
+
+def render_clip(character: Character, motion: str) -> RenderResult:
+    """짧은 동작 영상 (미리보기 · 쪽 동작) + 투명 프레임 묶음.
+
+    동작 전체에서 PREVIEW_MAX_FRAMES 만 골라 그린다."""
 
     ai = get_ai_client((character.image_width, character.image_height))
     result = render_with_fallback(
@@ -179,7 +229,7 @@ def render_clip(character: Character, motion: str) -> bytes:
             max_frames=PREVIEW_MAX_FRAMES,
         ),
     )
-    return result.content
+    return result
 
 
 # 긴 이야기 쪽 동작 중 미리 렌더해 둘 것 (손 흔들기는 미리보기가 맡는다).
@@ -197,13 +247,15 @@ def make_motion_clips(character: Character, storage) -> dict[str, str | None]:
     clips: dict[str, str | None] = {}
     for motion in PRERENDER_MOTIONS:
         try:
-            content = render_clip(character, motion)
+            result = render_clip(character, motion)
         except Exception:
             log.exception("쪽 동작 %s 미리 렌더 실패", motion)
-            content = None
+            result = None
         clips[motion] = (
-            storage.save(f"previews/{character.id}-{uuid.uuid4().hex[:8]}-{motion}.mp4", content)
-            if content
+            save_clip(
+                storage, f"previews/{character.id}-{uuid.uuid4().hex[:8]}-{motion}.mp4", result
+            )
+            if result and result.content
             else None
         )
     return clips
@@ -212,10 +264,11 @@ def make_motion_clips(character: Character, storage) -> dict[str, str | None]:
 def start_previews(character: Character) -> list[str]:
     """미리보기 · 쪽 동작을 다시 만들 준비. 지울 옛 파일 경로를 돌려준다 (커밋한 뒤 지운다)."""
 
-    old = [character.preview_blob_path, *(character.motion_clips or {}).values()]
+    old = [p for p in (character.preview_blob_path, *(character.motion_clips or {}).values()) if p]
     character.preview_blob_path, character.preview_status = None, "rendering"
     character.motion_clips = {}
-    return [p for p in old if p]
+    # 옆의 프레임 묶음도 — 없는 것을 지우는 것은 아무 일도 하지 않는다
+    return old + [sprite_path_for(p) for p in old] + [sprite_meta_path(p) for p in old]
 
 
 def wants_preview(character: Character) -> bool:
@@ -241,7 +294,9 @@ def _store_previews(db, character: Character, storage) -> None:
         db.commit()
     else:  # 그사이 관절을 다시 고쳤거나 원본을 지웠다 — 옛 관절로 만든 영상은 버린다
         for path in clips.values():
-            storage.delete(path)
+            if path:
+                for f in (path, sprite_path_for(path), sprite_meta_path(path)):
+                    storage.delete(f)
 
 
 def run_preview_job(character_id: uuid.UUID) -> None:
@@ -547,7 +602,9 @@ def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
         return list(ex.map(one, book.pages))
 
 
-def make_page_clips(story: Story, character: Character, storage, book: Book) -> dict[str, str]:
+def make_page_clips(
+    story: Story, character: Character, storage, book: Book, sprites: set[str] | None = None
+) -> dict[str, str]:
     """쪽 동작에 쓸 영상 {동작: 경로}. 동작마다 하나 (지금은 많아야 두 가지).
 
     손 흔들기는 S-05 미리보기, 통통 뛰기는 캐릭터를 만든 직후 미리 렌더한 영상(motion_clips)을
@@ -562,19 +619,24 @@ def make_page_clips(story: Story, character: Character, storage, book: Book) -> 
     clips: dict[str, str] = {}
     for motion in sorted(needed):
         try:
+            dst = f"results/{story.id}/{motion}.mp4"
             if ready.get(motion):
-                # 미리 만든 영상을 복사한다.
+                # 미리 만든 영상(과 투명 프레임 묶음)을 복사한다.
                 # 관절을 고치면 캐릭터 쪽 영상은 지워지므로 이야기에 따로 둔다
-                content = storage.read(ready[motion])
+                clips[motion], has_sprite = copy_clip(storage, ready[motion], dst)
+                if has_sprite and sprites is not None:
+                    sprites.add(motion)
             elif motion in ready or not can_render:
                 continue  # 미리 렌더가 실패했거나 아직이면 다시 하지 않는다 — 그 쪽은 멈춘 그림
             else:
-                content = render_clip(character, motion)  # 예전 그림: 미리 만든 것이 없다
+                result = render_clip(character, motion)  # 예전 그림: 미리 만든 것이 없다
+                if result.content:
+                    clips[motion] = save_clip(storage, dst, result)
+                    if result.sprite and sprites is not None:
+                        sprites.add(motion)
         except Exception:
             log.exception("쪽 동작 %s 영상 실패, 그 쪽은 멈춘 그림으로", motion)
             continue
-        if content:
-            clips[motion] = storage.save(f"results/{story.id}/{motion}.mp4", content)
     return clips
 
 
@@ -638,11 +700,20 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     else make_page_audio(story, storage, book)
                 )
                 wait_for_motion_clips(db, character)
-                clips = make_page_clips(story, character, storage, book)
+                sprites: set[str] = set()   # 투명 프레임 묶음까지 있는 동작
+                clips = make_page_clips(story, character, storage, book, sprites)
                 data = book.to_json()
                 for page, path in zip(data["pages"], audio, strict=True):
                     page["audio_blob_path"] = path
                     page["animation_blob_path"] = clips.get(PAGE_MOTIONS.get(page["action"]) or "")
+                    # 투명 프레임 묶음(영상 옆 같은 이름)이 있으면 화면이 장면 층으로 쌓는다.
+                    # 없으면 영상
+                    clip = page["animation_blob_path"]
+                    has = clip and PAGE_MOTIONS.get(page["action"]) in sprites
+                    meta = has and read_sprite_meta(storage, clip)
+                    if meta:
+                        page["sprite_blob_path"] = sprite_path_for(clip)
+                        page["sprite_frames"], page["sprite_box"] = meta["frames"], meta["box"]
                 story.book = data
                 story.audio_blob_path = None
                 if clips:

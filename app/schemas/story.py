@@ -142,6 +142,14 @@ class BookPage(BaseModel):
             "이 쪽 동작 MP4 (동작이 같은 쪽은 같은 파일). idle 이거나 렌더를 못 했으면 없다"
         ),
     )
+    sprite_url: str | None = Field(
+        default=None,
+        description=(
+            "이 쪽 동작의 바탕이 투명한 프레임 묶음 WebP (2026-11-03). "
+            "정사각 칸을 가로 8칸씩 줄 바꿔 늘어놓았다 — 프론트 S-09 가 장면 배경 · 물건과 "
+            "층으로 쌓는다. 예전 이야기 · 예전 AI 서버면 없다(MP4 로)"
+        ),
+    )
 
 
 class Book(BaseModel):

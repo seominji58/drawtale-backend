@@ -352,6 +352,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 | `animation_url` | AI 서버가 렌더한 MP4 (3-3). 동작은 `action` 으로 고른다 (4번 표 6) | 목 AI 면 원본 그림 URL |
 
 `book` (2026-10-12) — `length=long` 일 때만. `text` 는 쪽 글을 이어 붙인 것이다.
+**투명 프레임 묶음 · 세부 장소 (2026-11-03)** — 쪽에 `sprite_url`(바탕이 투명한 WebP — 정사각 칸 · 가로 늘 8칸, 남는 칸 투명), `sprite_frames`(장 수), `sprite_box`(첫 장에서 그림이 차지하는 자리 `[left, top, right, bottom]`, 칸 대비 0~1)가 온다. 같은 렌더에서 MP4 와 함께 나온다(AI `sprite=true`). 프론트 S-09 가 장면 배경 · 물건 · 인물과 층으로 쌓는다. 예전 이야기 · 예전 AI 는 없음(`null`) — 그때는 MP4. 장 수 · 자리를 서버가 주는 것은 화면이 다른 주소 그림의 픽셀을 못 읽어서(CORS)다. `scene.location` 은 장소 안 세부 장소 id(`school-cafeteria` 등, `app/services/book.py` SCENE_LOCATIONS — 프론트 `public/scenes/{id}` 와 같은 목록). 대본이 쪽마다 고르고, 모르면 `""`.
+
 **쪽마다 음성 · 동작 (2026-10-12)** — 쪽마다 `audio_url`(MP3)과 `animation_url`(MP4)이 온다. 긴 이야기는 이야기 전체 `audio_url` 을 만들지 않는다(`null`).
 - 음성: 쪽 글을 쪽마다 합성 (`results/{story_id}/page01.mp3` …). 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다. 캐릭터 목소리 판은 대사가 있는 쪽만 인물 목소리, 인물 → 목소리는 이야기 전체에서 한 번 정한다. 한 쪽이 실패하면 그 쪽만 `null`
 - 동작: 쪽 `action` 을 순화 동작으로 — `wave` → `wave_hello_gentle`, `walk` · `run` · `jump` · `dance` → `jumping_gentle`, `idle` → 영상 없음(멈춘 그림). 동작마다 한 번만 렌더(150프레임)하고 같은 동작 쪽은 같은 파일. `wave_hello_gentle` 은 S-05 미리보기 영상을 그대로 쓴다. 이야기 `animation_url` 은 첫 쪽 영상(없으면 그림)

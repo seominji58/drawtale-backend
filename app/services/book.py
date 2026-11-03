@@ -68,6 +68,9 @@ class Scene:
     # 영어 배경 지시문 1~2문장. 인물은 이름으로만 — 생김새는 character_sheet 를 붙인다.
     # 화풍은 넣지 않는다
     background: str
+    # 장소 안 세부 장소 id (SCENE_LOCATIONS, 2026-11-03). 화면이 그 자리의 배경판 · 물건을 쌓는다.
+    # 모르면 "" — 화면이 background 낱말로 짐작하거나 장소 기본 배경을 쓴다
+    location: str = ""
 
 
 @dataclass
@@ -117,6 +120,7 @@ class Book:
                         "hero_on_page": p.scene.hero,
                         "characters": [{"name": n, "slot": s} for n, s in p.scene.characters],
                         "background": p.scene.background,
+                        "location": p.scene.location,
                     },
                 }
                 for p in self.pages
@@ -218,7 +222,7 @@ SYSTEM = """너는 아이가 만든 이야기를 그림책 대본으로 옮겨 �
   주인공 이름은 쓰지 않는다 (쓰면 그림 모델이 다른 아이를 그린다).
   글자 · 간판 · 말풍선 · 숫자를 그림에 넣으라고 하지 않는다 (글자는 화면이 따로 얹는다).
   무섭거나 위험한 모습, 실제 사람 · 상표를 넣지 않는다. 화풍은 화면이 정하니 쓰지 않는다.
-- scene.pages 는 대본 pages 와 쪽 수가 같다.
+{location_rule}- scene.pages 는 대본 pages 와 쪽 수가 같다.
 
 JSON 으로만 답한다.
 {{"title": "8~15자 제목 — 이 이야기에만 나오는 물건이나 자리를 넣는다 (카드 글자를 그대로 제목으로 쓰지 않는다)",
@@ -232,6 +236,7 @@ JSON 으로만 답한다.
  "scene": {{"character_sheet": {{"친구": "영어 생김새"}},
            "pages": [{{"page": 1, "hero_on_page": true,
                       "characters": [{{"name": "친구", "slot": "right-middle"}}],
+                      "location": "세부 장소 id",
                       "background": "영어 배경 지시문"}}]}}}}"""
 
 HERO_FIRST = (
@@ -289,8 +294,44 @@ EXTRA_RULES = """
 """
 
 
+# 장소 카드 → 그 안의 세부 장소 (id, 이름) (2026-11-03).
+# 화면 그림(프론트 public/scenes/{id})과 같은 목록이다.
+# 첫 번째가 장소 기본 배경. 대본이 쪽마다 이 가운데 하나를 고른다 — 이야기가 학교 안에서
+# 급식실 → 운동장 → 복도로 옮겨 가면 배경도 바뀐다 (사용자: 「배경은 운동장으로 다 똑같아」)
+SCENE_LOCATIONS: dict[str, list[tuple[str, str]]] = {
+    "집": [("home", "마당"), ("home-living", "거실"), ("home-kitchen", "부엌"),
+          ("home-bedroom", "내 방")],
+    "놀이터": [("playground", "놀이터"), ("playground-path", "공원 산책길")],
+    "학교": [("school", "운동장"), ("school-classroom", "교실"), ("school-cafeteria", "급식실"),
+           ("school-hallway", "복도"), ("school-music", "음악실"), ("school-library", "도서관")],
+    "마을": [("town", "거리"), ("town-market", "시장"), ("town-park", "공원"),
+           ("town-busstop", "버스 정류장")],
+    "숲": [("forest", "숲속 빈터"), ("forest-stream", "시냇가"), ("forest-trail", "숲길"),
+          ("forest-flowers", "꽃밭")],
+    "바다": [("sea", "모래사장"), ("sea-underwater", "바닷속"), ("sea-pier", "선착장")],
+    "우주": [("space", "달 표면"), ("space-ship", "우주선 안"), ("space-planet", "다른 행성")],
+    "동굴": [("cave", "동굴 안"), ("cave-entrance", "동굴 입구"), ("cave-lake", "지하 호수")],
+}
+
+
+def location_rule(place: str | None) -> str:
+    """대본 지시문의 세부 장소 줄. 카드에 없는 장소(말로 정한 장소)면 비워 두게 한다"""
+    subs = SCENE_LOCATIONS.get((place or "").strip())
+    if not subs:
+        return '- location 은 "" 로 둔다.\n'
+    items = ", ".join(f"{i}({k})" for i, k in subs)
+    return (
+        f"- location 은 그 쪽 장면이 벌어지는 자리다. 다음 id 중 하나만 적는다: {items}.\n"
+        "  대본에서 자리를 옮기면 location 도 바꾸고, 목록에 없는 자리면 가장 가까운 것을 고른다.\n"
+    )
+
+
 def book_prompt(
-    pages: int, characters: bool, name: str | None, extras: dict[str, str] | None = None
+    pages: int,
+    characters: bool,
+    name: str | None,
+    extras: dict[str, str] | None = None,
+    place: str | None = None,
 ) -> str:
     n = split_pages(pages)
     if characters:
@@ -311,6 +352,7 @@ def book_prompt(
         dialogue_rule=dialogue,
         hero=hero,
         narrator=NARRATOR,
+        location_rule=location_rule(place),
     )
     if extras:
         # JSON 형식 안내 바로 앞에 넣는다
@@ -460,7 +502,9 @@ def parse_scene(book: Book, data) -> None:
                 free.remove(slot)
                 chars.append((name, slot))
             hero = bool(plan.get("hero_on_page")) or p.stage in ("action", "result")
-            scenes.append(Scene(hero, chars, str(plan.get("background") or "").strip()))
+            loc = str(plan.get("location") or "").strip().lower()
+            loc = loc if re.fullmatch(r"[a-z]+(-[a-z]+)?", loc) else ""
+            scenes.append(Scene(hero, chars, str(plan.get("background") or "").strip(), loc))
     except (TypeError, AttributeError):
         return
     for p, sc in zip(book.pages, scenes, strict=True):

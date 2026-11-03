@@ -1,5 +1,6 @@
 """Client for the private AI service. Backend never imports AI code; it only speaks HTTP."""
 
+import base64
 import json
 import logging
 import re
@@ -160,10 +161,22 @@ class HttpAIClient:
                 "joints": json.dumps([j.model_dump(mode="json") for j in req.joints]),
                 "motion": req.motion,
                 **({"max_frames": req.max_frames} if req.max_frames else {}),
+                **({"sprite": "true"} if req.sprite else {}),
             },
         )
         if res.headers.get("content-type", "").startswith("application/json"):
-            raise _ai_error(self._json(res).get("message"))
+            body = self._json(res)
+            if "video" not in body:
+                raise _ai_error(body.get("message"))
+            # sprite=true 응답: MP4 와 투명 프레임 묶음을 함께 (drawtale-ai renderer, 2026-11-03)
+            return RenderResult(
+                content=base64.b64decode(body["video"]),
+                sprite=base64.b64decode(body["sprite"]) if body.get("sprite") else None,
+                sprite_frames=int(body.get("sprite_frames") or 0),
+                sprite_box=body.get("sprite_box"),
+                processing_time_ms=int(res.headers.get("X-Processing-Time-Ms", 0)),
+                model_version=res.headers.get("X-Model-Version", UNKNOWN),
+            )
 
         return RenderResult(
             content=res.content,

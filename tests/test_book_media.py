@@ -224,7 +224,11 @@ def test_start_previews_returns_old_files():
         preview_status="ready",
         motion_clips={"jumping_gentle": "previews/b.mp4"},
     )
-    assert jobs.start_previews(character) == ["previews/a.mp4", "previews/b.mp4"]
+    # 옆에 둔 투명 프레임 묶음도 같이 지운다 (없으면 아무 일도 하지 않는다)
+    assert jobs.start_previews(character) == [
+        "previews/a.mp4", "previews/b.mp4", "previews/a.sprite.webp", "previews/b.sprite.webp",
+        "previews/a.sprite.json", "previews/b.sprite.json",
+    ]
     assert character.preview_status == "rendering" and character.motion_clips == {}
 
 
@@ -264,3 +268,63 @@ def test_long_story_response_has_page_urls(client, png_bytes, monkeypatch):
     # 목 AI 는 영상을 만들지 않는다 → 쪽 영상은 없고 이야기 영상 자리에는 그림
     assert all(p["animation_url"] is None for p in pages)
     assert story["animation_url"].split("?")[0].endswith(".png")  # 주소에 서명이 붙는다 (2026-11-02)
+
+
+class SpriteAI(FakeAI):
+    """투명 프레임 묶음까지 주는 AI 서버 (drawtale-ai sprite=true, 2026-11-03)"""
+
+    def render(self, req):
+        self.motions.append((req.motion, req.max_frames))
+        assert req.sprite  # 백엔드는 늘 묶음도 달라고 한다
+        return RenderResult(content=b"mp4", sprite=b"webp:" + req.motion.encode(), sprite_frames=15,
+                            sprite_box=[0.2, 0.1, 0.8, 0.9])
+
+
+def test_sprite_saved_next_to_clip(monkeypatch):
+    ai = SpriteAI()
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
+    storage = get_storage()
+    character = _character(preview_status="rendering", motion_clips={})
+    jobs._store_previews(FakeDB(), character, storage)
+    walk = character.motion_clips["walk"]
+    # 영상 옆 같은 이름 — 따로 칸을 두지 않는다
+    assert storage.read(jobs.sprite_path_for(walk)) == b"webp:walk"
+    # 장 수 · 그림 자리는 서버가 준다 (화면은 다른 주소 그림의 픽셀을 못 읽는다)
+    assert jobs.read_sprite_meta(storage, walk) == {"frames": 15, "box": [0.2, 0.1, 0.8, 0.9]}
+    preview = jobs.sprite_path_for(character.preview_blob_path)
+    assert storage.read(preview) == b"webp:wave_hello_gentle"
+
+
+def test_page_clips_copy_sprites_only_when_present(monkeypatch):
+    ai = FakeAI()
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
+    storage = get_storage()
+    storage.save("previews/s1-walk.mp4", b"walk")
+    storage.save("previews/s1-walk.sprite.webp", b"walk-sprite")
+    storage.save("previews/s1-walk.sprite.json", b'{"frames": 12, "box": [0, 0, 1, 1]}')
+    storage.save("previews/s1-run.mp4", b"run")   # 예전 AI 가 만든 영상: 묶음 없음
+    story = _story()
+    character = _character(preview_blob_path=None, motion_clips={"walk": "previews/s1-walk.mp4",
+                                                                 "run": "previews/s1-run.mp4"})
+    sprites: set[str] = set()
+    book = Book("숲", PAGES, [1, 2, 3, 5])
+    clips = jobs.make_page_clips(story, character, storage, book, sprites)
+    assert storage.read(jobs.sprite_path_for(clips["walk"])) == b"walk-sprite"
+    assert jobs.read_sprite_meta(storage, clips["walk"])["frames"] == 12
+    # 묶음이 실제로 있는 동작만 — 없는 쪽은 화면이 영상으로 보여 준다
+    assert "walk" in sprites and "run" not in sprites
+
+
+def test_book_response_has_sprite_url():
+    from app.api.v1.stories import book_response
+
+    storage = get_storage()
+    book = {"pages": [
+        {"page": 1, "animation_blob_path": "results/x/walk.mp4",
+         "sprite_blob_path": "results/x/walk.sprite.webp"},
+        {"page": 2, "animation_blob_path": None},
+    ]}
+    pages = book_response(book, storage)["pages"]
+    assert pages[0]["sprite_url"] and "walk.sprite.webp" in pages[0]["sprite_url"]
+    assert pages[1]["sprite_url"] is None
+    assert "sprite_blob_path" not in pages[0]

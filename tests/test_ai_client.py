@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from app.core.errors import AppError
+from app.schemas.ai import RenderRequest
 from app.schemas.common import JOINT_ORDER
 from app.services.ai_client import HttpAIClient
 
@@ -104,3 +105,32 @@ def test_analyze_unreachable():
         _client(handler).analyze(b"x", "draw.png")
 
     assert e.value.code == "AI_UNAVAILABLE"
+
+
+def test_render_with_sprite_json():
+    import base64
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["sprite"] = b"sprite=true" in request.content or b'name="sprite"' in request.content
+        return httpx.Response(200, json={
+            "video": base64.b64encode(b"mp4").decode(),
+            "sprite": base64.b64encode(b"webp").decode(),
+            "sprite_frames": 15, "sprite_box": [0.1, 0.2, 0.9, 0.95],
+            "sprite_cell": 512, "sprite_cols": 8,
+        }, headers={"X-Processing-Time-Ms": "9"})
+
+    res = _client(handler).render(RenderRequest(request_id="r", joints=[], motion="walk"))
+    assert seen["sprite"]
+    assert (res.content, res.sprite) == (b"mp4", b"webp")
+    assert (res.sprite_frames, res.processing_time_ms) == (15, 9)
+    assert res.sprite_box == [0.1, 0.2, 0.9, 0.95]
+
+
+def test_render_old_ai_returns_mp4_only():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"mp4", headers={"content-type": "video/mp4"})
+
+    res = _client(handler).render(RenderRequest(request_id="r", joints=[], motion="walk"))
+    assert res.content == b"mp4" and res.sprite is None
