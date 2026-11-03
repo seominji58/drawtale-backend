@@ -256,29 +256,13 @@ def render_clip(character: Character, motion: str) -> RenderResult:
 # 이야기를 만들 때 렌더하면 한 편이 2~5분 걸려서(2026-10-12 실측) 캐릭터를 만든 직후
 # 미리보기에 이어 렌더한다 — 아이가 이름을 짓고 카드를 고르는 동안 끝난다
 # 2026-11-03: 걷기 · 뛰기 · 점프 · 춤. 자주 나오는 순서로 그린다 (VM 2코어에서 하나에 10초 안팎)
-PRERENDER_MOTIONS = ("walk", "run", "jumping_gentle", "dab_gentle")
+# 카드 이야기 512가지에서 많이 쓰는 순 (걷기 1,057쪽 · 점프 387 · 뛰기 316 · 춤 308, 2026-11-03) — 이야기가 필요한 것만 기다리므로
+# 자주 쓰는 것이 먼저 끝나야 덜 기다린다
+PRERENDER_MOTIONS = ("walk", "jumping_gentle", "run", "dab_gentle")
+# 미리 렌더 중인 동작의 자리 (motion_clips 값). 실패는 None, 끝나면 경로
+PENDING = ""
 # 이야기를 만들 때 미리 렌더가 아직 돌고 있으면 기다리는 시간. 넘으면 그 쪽들은 멈춘 그림
 PRERENDER_WAIT_SECONDS = 180
-
-
-def make_motion_clips(character: Character, storage) -> dict[str, str | None]:
-    """PRERENDER_MOTIONS 를 렌더해 {동작: 경로}. 실패한 동작은 None (이야기에서는 멈춘 그림)."""
-
-    clips: dict[str, str | None] = {}
-    for motion in PRERENDER_MOTIONS:
-        try:
-            result = render_clip(character, motion)
-        except Exception:
-            log.exception("쪽 동작 %s 미리 렌더 실패", motion)
-            result = None
-        clips[motion] = (
-            save_clip(
-                storage, f"previews/{character.id}-{uuid.uuid4().hex[:8]}-{motion}.mp4", result
-            )
-            if result and result.content
-            else None
-        )
-    return clips
 
 
 def start_previews(character: Character) -> list[str]:
@@ -302,21 +286,43 @@ def wants_preview(character: Character) -> bool:
 
 
 def _store_previews(db, character: Character, storage) -> None:
-    """S-05 미리보기를 먼저 만들어 커밋하고(S-05 가 기다린다), 이어서 쪽 동작 영상."""
+    """S-05 미리보기를 먼저 만들어 커밋하고(S-05 가 기다린다), 이어서 쪽 동작 영상을 **하나씩 끝날 때마다** 커밋한다.
+
+    이야기는 자기에게 필요한 동작만 끝나면 시작한다 (wait_for_motion_clips) — 전에는 네 동작이 모두 끝나야 시작해
+    캐릭터를 만든 직후 이야기를 만들면 한참 기다렸다 (2026-11-03 사용자 「렌더링 시간이 점점 오래」).
+    렌더하는 사이 관절을 다시 고쳤거나 원본을 지웠으면(motion_clips 가 바뀜) 옛 관절로 만든 영상은 버린다."""
 
     character.preview_blob_path = make_preview(character, storage)
     character.preview_status = "ready" if character.preview_blob_path else "failed"
     db.commit()
-    clips = make_motion_clips(character, storage)
     db.refresh(character)
-    if character.motion_clips == {}:
-        character.motion_clips = clips
+    if character.motion_clips != {}:
+        return  # 그사이 다시 시작했거나 원본을 지웠다
+    written: dict[str, str | None] = {m: PENDING for m in PRERENDER_MOTIONS}
+    character.motion_clips = dict(written)
+    db.commit()
+    for motion in PRERENDER_MOTIONS:
+        try:
+            result = render_clip(character, motion)
+        except Exception:
+            log.exception("쪽 동작 %s 미리 렌더 실패", motion)
+            result = None
+        path = (
+            save_clip(storage, f"previews/{character.id}-{uuid.uuid4().hex[:8]}-{motion}.mp4", result)
+            if result and result.content
+            else None
+        )
+        db.refresh(character)
+        if character.motion_clips != written:
+            # 옛 관절로 만든 것 — 지금 것과 이미 만든 것 모두 버린다
+            for done in [path, *written.values()]:
+                if done:
+                    for f in (done, sprite_path_for(done), sprite_meta_path(done)):
+                        storage.delete(f)
+            return
+        written = {**written, motion: path}
+        character.motion_clips = dict(written)
         db.commit()
-    else:  # 그사이 관절을 다시 고쳤거나 원본을 지웠다 — 옛 관절로 만든 영상은 버린다
-        for path in clips.values():
-            if path:
-                for f in (path, sprite_path_for(path), sprite_meta_path(path)):
-                    storage.delete(f)
 
 
 def run_preview_job(character_id: uuid.UUID) -> None:
@@ -683,11 +689,20 @@ def make_page_clips(
     return clips
 
 
-def wait_for_motion_clips(db, character: Character) -> None:
-    """미리 렌더가 돌고 있으면(motion_clips == {}) 끝날 때까지 조금 기다린다."""
+def wait_for_motion_clips(db, character: Character, needed: set[str] | None = None) -> None:
+    """미리 렌더가 돌고 있으면 **이 이야기에 필요한 동작**이 끝날 때까지 조금 기다린다 (needed 가 없으면 전부)."""
+
+    def busy() -> bool:
+        clips = character.motion_clips
+        if clips == {}:
+            return True
+        if not clips:
+            return False
+        want = needed if needed is not None else set(clips)
+        return any(clips.get(m) == PENDING for m in want)
 
     deadline = time.monotonic() + PRERENDER_WAIT_SECONDS
-    while character.motion_clips == {} and time.monotonic() < deadline:
+    while busy() and time.monotonic() < deadline:
         time.sleep(2)
         db.refresh(character)
 
@@ -742,7 +757,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     if shared_audio
                     else make_page_audio(story, storage, book)
                 )
-                wait_for_motion_clips(db, character)
+                wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None})
                 sprites: set[str] = set()   # 투명 프레임 묶음까지 있는 동작
                 clips = make_page_clips(story, character, storage, book, sprites)
                 data = book.to_json()
@@ -773,7 +788,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     if shared_audio
                     else make_audio(story, storage, script)
                 )
-                wait_for_motion_clips(db, character)
+                wait_for_motion_clips(db, character, {motion_for(story.action)})
                 story.animation_blob_path = render_story(story, character, storage)
             else:
                 script = (
@@ -781,7 +796,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 )
                 story.text = script_text(script) if script else write_story_text(story)
                 story.audio_blob_path = make_audio(story, storage, script)
-                wait_for_motion_clips(db, character)
+                wait_for_motion_clips(db, character, {motion_for(story.action)})
                 story.animation_blob_path = render_story(story, character, storage)
 
             story.still_blob_path = copy_still(story, character, storage)

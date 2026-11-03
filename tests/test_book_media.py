@@ -193,7 +193,8 @@ def test_store_previews_then_motion_clips(monkeypatch):
     jobs._store_previews(db, character, get_storage())
     # 미리보기를 먼저 커밋한다 (S-05 가 기다린다). 쪽 동작들은 그다음
     assert [m for m, _ in ai.motions] == ["wave_hello_gentle", *jobs.PRERENDER_MOTIONS]
-    assert character.preview_status == "ready" and db.commits == 2
+    # 미리보기 · 「렌더 중」 표시 · 동작 하나 끝날 때마다 (이야기가 필요한 동작만 기다리게)
+    assert character.preview_status == "ready" and db.commits == 2 + len(jobs.PRERENDER_MOTIONS)
     assert character.motion_clips["jumping_gentle"].endswith("-jumping_gentle.mp4")
 
 
@@ -206,7 +207,8 @@ def test_store_previews_discards_clips_if_original_deleted(monkeypatch):
     monkeypatch.setattr(storage, "save", lambda p, d: saved.append(p) or real_save(p, d))
 
     def original_deleted(obj, n):
-        obj.motion_clips = None  # 렌더하는 동안 원본을 지웠다 (관절을 다시 고쳐도 마찬가지)
+        if n == 3:  # 걷기 · 점프를 만든 뒤, 렌더하는 동안 원본을 지웠다 (관절을 다시 고쳐도 마찬가지)
+            obj.motion_clips = None
 
     jobs._store_previews(FakeDB(original_deleted), character, storage)
     assert character.motion_clips is None
@@ -422,3 +424,20 @@ def test_short_story_copies_prerendered_clip_with_sprite(monkeypatch):
     assert [m for m, _ in ai.motions] == ["dab_gentle"]
     assert storage.read(jobs.sprite_path_for(path2)) == b"webp:dab_gentle"
     assert jobs.MOTION_ACTION[jobs.motion_for(story2.action)] == "dance"
+
+
+
+def test_story_waits_only_for_needed_motions(monkeypatch):
+    """미리 렌더가 동작마다 커밋되므로, 이야기는 자기에게 필요한 동작만 끝나면 시작한다 (2026-11-03)."""
+    monkeypatch.setattr(jobs.time, "sleep", lambda s: None)
+    character = _character(motion_clips={"walk": "previews/w.mp4", "jumping_gentle": jobs.PENDING,
+                                         "run": jobs.PENDING, "dab_gentle": jobs.PENDING})
+    db = FakeDB()
+    jobs.wait_for_motion_clips(db, character, {"walk"})
+    assert db.refreshes == 0   # 걷기만 필요 — 바로
+    def jump_done(obj, n):
+        if n == 2:
+            obj.motion_clips = {**obj.motion_clips, "jumping_gentle": "previews/j.mp4"}
+    db = FakeDB(jump_done)
+    jobs.wait_for_motion_clips(db, character, {"walk", "jumping_gentle"})
+    assert db.refreshes == 2 and character.motion_clips["run"] == jobs.PENDING
