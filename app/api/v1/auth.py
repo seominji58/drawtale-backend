@@ -144,3 +144,18 @@ def social_login(
 )
 def me(user: User = Depends(current_user)) -> MeResponse:
     return MeResponse(user_id=user.id, providers=[a.provider for a in user.social_accounts])
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={401: {"model": ErrorResponse}},
+    summary="계정 탈퇴 — 그림 · 이야기 · 음성 · 영상 · 보호자 목소리 · 로그인 기록을 모두 지운다",
+)
+def delete_me(db: Session = Depends(get_db), user: User = Depends(current_user)) -> Response:
+    """되돌릴 수 없다. 화면(S-13)이 한 번 묻고 부른다. 이 토큰도 함께 지워져 다음 요청은 401 (2026-11-03)."""
+
+    from app.services.account import delete_account
+
+    delete_account(db, user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

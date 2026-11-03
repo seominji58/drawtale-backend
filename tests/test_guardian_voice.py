@@ -229,3 +229,36 @@ def test_narration_keeps_name_but_does_not_use_it(client):
     assert story["protagonist_name"] == "보리"
     assert "보리" not in story["text"]
     assert "나는" in story["text"]
+
+
+def test_delete_account_leaves_nothing(client, eleven):
+    """계정 탈퇴 — 그림 · 이야기 · 파일 · 보호자 목소리 · 로그인 기록까지 남는 것이 없다 (pt_docs 09 5장, 2026-11-03)."""
+    from app.models import AuthToken, Character
+    from app.services.account import account_files
+    from app.services.storage import get_storage
+
+    token = _token()
+    _register(client, token)
+    cid = _upload(client, token)
+    story = _story(client, token, cid, narrator="guardian")
+    other = _token()   # 남의 계정은 그대로
+    other_cid = _upload(client, other)
+    with SessionLocal() as db:
+        user = db.get(Character, __import__("uuid").UUID(cid)).user_id
+        files = account_files(db, db.get(User, user))
+    assert files, "지울 파일이 있어야 한다"
+    storage = get_storage()
+    assert client.delete("/api/v1/auth/me", headers=_auth(token)).status_code == 204
+    assert ("DELETE", "/v1/voices/guardian-1") in eleven
+    for path in files:
+        with pytest.raises(Exception):
+            storage.read(path)
+    with SessionLocal() as db:
+        assert db.get(User, user) is None
+        assert db.query(Character).filter(Character.user_id == user).count() == 0
+        assert db.query(Story).filter(Story.id == __import__("uuid").UUID(story["id"])).count() == 0
+        assert db.query(GuardianVoice).filter(GuardianVoice.user_id == user).count() == 0
+        assert db.query(AuthToken).filter(AuthToken.user_id == user).count() == 0
+    # 이 토큰으로는 더 못 들어오고, 남의 것은 남는다
+    assert client.get("/api/v1/auth/me", headers=_auth(token)).status_code == 401
+    assert client.get(f"/api/v1/characters/{other_cid}", headers=_auth(other)).status_code == 200
