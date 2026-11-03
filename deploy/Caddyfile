@@ -38,6 +38,12 @@ www.drawtale.kr {
 	file_server
 	encode gzip
 
+	# 화면 파일(index.html)은 늘 새로 확인하게 한다. 안 그러면 브라우저가 옛 화면을 계속 써서
+	# 배포해도 반영이 안 된다 (2026-11-03). assets/ 는 파일 이름에 내용 해시가 붙어 오래 둬도 된다
+	@page not path /assets/*
+	header @page Cache-Control "no-cache"
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+
 	# 화면 보안 헤더 (2026-11-02). 프론트 public/staticwebapp.config.json 의 globalHeaders 와 같게 둔다
 	header {
 		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
