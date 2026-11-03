@@ -1,6 +1,7 @@
 """Background job runners. Each runner opens its own DB session (the request session is closed)."""
 
 import hashlib
+import io
 import json
 import logging
 import time
@@ -727,6 +728,31 @@ def wait_for_motion_clips(db, character: Character, needed: set[str] | None = No
         db.refresh(character)
 
 
+def trim_still(png: bytes) -> bytes:
+    """잘라 낸 정지 그림(원본 사진 크기 · 둘레는 투명)을 그림이 있는 자리만 남긴다 (2026-11-03).
+
+    화면 장면 층은 정지 그림 전체를 주인공 키에 맞추고, 움직이는 쪽은 프레임 묶음의 그림 자리만 재서 맞춘다.
+    둘레 여백이 그대로면 멈춘 쪽 주인공이 작아져, 쪽을 넘길 때마다 커졌다 작아졌다 (사용자 「상황에 안 맞게 커졌다가
+    작아지는」). 읽지 못하면 그대로 둔다"""
+
+    try:
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(png))
+        im.load()
+        box = im.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox() if im.mode in ("RGBA", "LA") else None
+        if not box or box == (0, 0, im.width, im.height):
+            return png
+        pad = max(2, round(max(box[2] - box[0], box[3] - box[1]) * 0.01))
+        box = (max(0, box[0] - pad), max(0, box[1] - pad), min(im.width, box[2] + pad), min(im.height, box[3] + pad))
+        out = io.BytesIO()
+        im.crop(box).save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception:  # noqa: BLE001
+        log.exception("정지 그림 다듬기 실패, 그대로 둡니다")
+        return png
+
+
 def copy_still(story: Story, character: Character, storage) -> str | None:
     """캐릭터의 잘라 낸 정지 그림을 이 이야기 폴더로 복사한다. 없거나 실패하면 None (2026-11-03).
 
@@ -736,7 +762,7 @@ def copy_still(story: Story, character: Character, storage) -> str | None:
     if not character.cutout_blob_path:
         return None
     try:
-        return storage.save(f"results/{story.id}/still.png", storage.read(character.cutout_blob_path))
+        return storage.save(f"results/{story.id}/still.png", trim_still(storage.read(character.cutout_blob_path)))
     except Exception:
         log.exception("story %s: 정지 그림 복사 실패", story.id)
         return None

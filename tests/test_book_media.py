@@ -460,3 +460,17 @@ def test_page_audio_retries_before_giving_up(monkeypatch):
     book = Book("숲", PAGES, [1, 2, 3, 5])
     paths = jobs.make_page_audio(_story(), get_storage(), book)
     assert all(paths) and calls["n"] == 3 * len(PAGES)
+
+
+def test_story_still_is_trimmed_to_drawing():
+    """이야기 정지 그림은 그림 자리만 — 둘레 여백이 있으면 멈춘 쪽 주인공이 작아졌다 (2026-11-03)."""
+    import io
+
+    from PIL import Image
+
+    im = Image.new("RGBA", (400, 600), (0, 0, 0, 0))
+    im.paste((200, 50, 50, 255), (100, 150, 300, 450))
+    buf = io.BytesIO(); im.save(buf, format="PNG")
+    out = Image.open(io.BytesIO(jobs.trim_still(buf.getvalue())))
+    assert out.size[0] <= 210 and out.size[1] <= 310 and out.size[0] >= 200
+    assert jobs.trim_still(b"not png") == b"not png"
