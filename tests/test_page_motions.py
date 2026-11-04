@@ -57,3 +57,15 @@ def test_cap_without_render_uses_only_prerendered():
 def test_every_new_action_is_known_to_the_script():
     assert set(NEW_ACTIONS) <= set(ACTIONS)
     assert set(FALLBACK) <= set(NEW_ACTIONS)
+
+
+def test_retag_rules():
+    from app.seed.retag_motions import problems
+
+    ok = ["walk", "search", "shiver", "breathe", "breathe", "hooray", "walk", "dance"]
+    assert problems(ok, 8) == []
+    assert problems(ok[:7], 8)                                    # 쪽 수가 다르다
+    assert problems([*ok[:7], "teleport"], 8)                     # 목록에 없다
+    assert problems(["walk"] * 4 + ok[4:], 8)                     # 네 쪽 연속
+    assert problems(["breathe", "walk"] * 4, 8)                   # 숨쉬기가 세 쪽을 넘는다
+    assert problems(["swim", "fly", "kick", "point", "walk", "run", "jump", "dance"], 8)  # 새 동작 네 가지
