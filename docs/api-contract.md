@@ -303,6 +303,12 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 { "story_id": "...", "job_id": "...", "status": "pending" }
 ```
 
+**그만두기 (2026-11-04)** — `POST /api/v1/stories/{story_id}/cancel` → `202 { "story_id": "...", "status": "running" }`
+
+S-08 「그만하기」에서 부른다. 돌고 있는 작업은 지금 단계(대본 · 음성 · 렌더)를 마치는 대로 멈추고 Job 이
+`failed` · `error.code = "CANCELLED"` 가 된다. 그때 같은 계정(비회원은 그림)의 「작업 중」 자리를 비운다 —
+그 전에 다시 만들면 `429 BUSY`. 이미 끝난 이야기는 그대로 둔다(응답 `status` 가 그때의 Job 상태). 남의 이야기는 `404`.
+
 ### 2-6. `GET /api/v1/stories/{story_id}` — 이야기 조회
 
 **응답 `200`**

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,31 @@ def _start(job: Job) -> None:
 def _succeed(job: Job) -> None:
     job.status = JobStatus.succeeded
     job.finished_at = utcnow()
+
+
+# 「그만하기」를 누른 이야기 작업 (2026-11-04). 서버가 하나라 메모리로 충분하다 — 다시 시작하면 돌던 작업도 없다.
+# 작업은 단계(대본 · 음성 · 렌더)마다 이것을 보고 멈춘다. 전에는 끝까지 돌아 그동안 같은 계정이 새 이야기를 못 만들었다
+_cancelled: set[uuid.UUID] = set()
+_cancel_lock = threading.Lock()
+
+
+class Cancelled(Exception):
+    """사용자가 그만둔 작업."""
+
+
+def cancel_job(job_id: uuid.UUID) -> None:
+    with _cancel_lock:
+        _cancelled.add(job_id)
+
+
+def cancelled(job_id: uuid.UUID) -> bool:
+    with _cancel_lock:
+        return job_id in _cancelled
+
+
+def _stop_if_cancelled(job_id: uuid.UUID) -> None:
+    if cancelled(job_id):
+        raise Cancelled
 
 
 def _fail(job: Job, code: str, message: str) -> None:
@@ -717,7 +743,9 @@ def make_page_clips(
     return clips
 
 
-def wait_for_motion_clips(db, character: Character, needed: set[str] | None = None) -> None:
+def wait_for_motion_clips(
+    db, character: Character, needed: set[str] | None = None, stop=lambda: False  # noqa: ANN001
+) -> None:
     """미리 렌더가 돌고 있으면 **이 이야기에 필요한 동작**이 끝날 때까지 조금 기다린다 (needed 가 없으면 전부)."""
 
     def busy() -> bool:
@@ -730,7 +758,7 @@ def wait_for_motion_clips(db, character: Character, needed: set[str] | None = No
         return any(clips.get(m) == PENDING for m in want)
 
     deadline = time.monotonic() + PRERENDER_WAIT_SECONDS
-    while busy() and time.monotonic() < deadline:
+    while busy() and time.monotonic() < deadline and not stop():
         time.sleep(2)
         db.refresh(character)
 
@@ -785,6 +813,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
         db.commit()
 
         storage = get_storage()
+        stop = lambda: cancelled(job_id)  # noqa: E731
         try:
             # 카드로만 고른 이야기는 사람이 읽고 통과시킨 저장본을 꺼낸다 — 대본 0초 (pt_docs 13 1-1)
             stored = card_stories.find(db, story)
@@ -810,12 +839,15 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     can_render=bool(character.ai_request_id) and character.original_deleted_at is None,
                 )
                 story.text = book.text()
+                _stop_if_cancelled(job_id)
                 audio = (
                     cached_page_audio(story, storage, book, card_audio_key(stored, story))
                     if shared_audio
                     else make_page_audio(story, storage, book)
                 )
-                wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None})
+                _stop_if_cancelled(job_id)
+                wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}, stop)
+                _stop_if_cancelled(job_id)
                 sprites: set[str] = set()   # 투명 프레임 묶음까지 있는 동작
                 clips = make_page_clips(story, character, storage, book, sprites)
                 data = book.to_json()
@@ -846,7 +878,9 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     if shared_audio
                     else make_audio(story, storage, script)
                 )
-                wait_for_motion_clips(db, character, {motion_for(story.action)})
+                _stop_if_cancelled(job_id)
+                wait_for_motion_clips(db, character, {motion_for(story.action)}, stop)
+                _stop_if_cancelled(job_id)
                 story.animation_blob_path = render_story(story, character, storage)
             else:
                 script = (
@@ -854,12 +888,18 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 )
                 story.text = script_text(script) if script else write_story_text(story)
                 story.audio_blob_path = make_audio(story, storage, script)
-                wait_for_motion_clips(db, character, {motion_for(story.action)})
+                _stop_if_cancelled(job_id)
+                wait_for_motion_clips(db, character, {motion_for(story.action)}, stop)
+                _stop_if_cancelled(job_id)
                 story.animation_blob_path = render_story(story, character, storage)
 
             story.still_blob_path = copy_still(story, character, storage)
             story.status = JobStatus.succeeded
             _succeed(job)
+        except Cancelled:
+            log.info("story job %s: 사용자가 그만뒀습니다", job_id)
+            story.status = JobStatus.failed
+            _fail(job, "CANCELLED", "이야기 만들기를 그만뒀어요.")
         except StoryBlocked:
             story.status = JobStatus.failed
             _fail(
@@ -875,3 +915,5 @@ def run_story_job(job_id: uuid.UUID) -> None:
             story.status = JobStatus.failed
             _fail(job, "INTERNAL_ERROR", "이야기 생성 중 알 수 없는 오류가 발생했어요.")
         db.commit()
+        with _cancel_lock:
+            _cancelled.discard(job_id)

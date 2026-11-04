@@ -22,7 +22,9 @@ from app.schemas.story import (
     StoryCreateResponse,
     StoryResponse,
 )
-from app.services.jobs import MOTION_ACTION, motion_for, read_sprite_meta, run_story_job, sprite_path_for
+from app.services.jobs import (
+    MOTION_ACTION, cancel_job, motion_for, read_sprite_meta, run_story_job, sprite_path_for,
+)
 from app.services.storage import get_storage
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -89,6 +91,28 @@ def create_story(
 
     background.add_task(rate_limit.run_then_release, busy_key, run_story_job, job.id)
     return StoryCreateResponse(story_id=story.id, job_id=job.id, status=job.status)
+
+
+@router.post(
+    "/{story_id}/cancel",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={404: {"model": ErrorResponse}},
+    summary="이야기 만들기 그만두기 (S-08 「그만하기」)",
+)
+def cancel_story(
+    story_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """돌고 있는 작업에 그만두라고 알린다. 작업은 지금 단계를 마치는 대로 멈추고(CANCELLED) 같은 계정의
+    「작업 중」 자리를 비운다. 이미 끝난 이야기는 그대로 둔다 (2026-11-04 — 전에는 그만둬도 끝까지 돌아
+    그동안 새 이야기가 BUSY 였다)."""
+
+    story = owned_story(db, story_id, user)
+    job = db.scalar(select(Job).where(Job.story_id == story.id).order_by(Job.created_at.desc()))
+    if job is not None and job.status in (JobStatus.pending, JobStatus.running):
+        cancel_job(job.id)
+    return {"story_id": str(story.id), "status": job.status if job else None}
 
 
 def _daily_limits(db: Session, request: Request, user: User | None) -> None:
