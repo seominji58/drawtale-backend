@@ -92,5 +92,9 @@ def test_page_motions_use_every_registered_motion():
 
     assert PAGE_MOTIONS["walk"] == "walk" and PAGE_MOTIONS["run"] == "run"
     assert PAGE_MOTIONS["dance"] == "dab_gentle" and PAGE_MOTIONS["idle"] is None
-    # 쪽에 나오는 동작(손 흔들기는 미리보기가 맡는다)은 모두 미리 그려 둔다
-    assert {m for m in PAGE_MOTIONS.values() if m} - {"wave_hello_gentle"} <= set(PRERENDER_MOTIONS)
+    # 쪽에 나오는 동작(손 흔들기는 미리보기가 맡는다)은 모두 미리 그려 둔다.
+    # 2026-11-04 새 동작은 이야기에 나올 때 렌더한다 — 대신 쓸 미리 그린 동작이 있어야 한다
+    from app.services.page_motions import FALLBACK
+
+    assert {m for m in PAGE_MOTIONS.values() if m} - {"wave_hello_gentle"} - set(FALLBACK) <= set(PRERENDER_MOTIONS)
+    assert {PAGE_MOTIONS[a] for a in FALLBACK.values()} - {"wave_hello_gentle"} <= set(PRERENDER_MOTIONS)

@@ -103,7 +103,7 @@ def test_parse_book_rejects_mixed_stage_order():
 
 
 def test_parse_book_fixes_action_and_order_pages():
-    pages = [dict(GOOD[0], action="fly"), *GOOD[1:]]
+    pages = [dict(GOOD[0], action="teleport"), *GOOD[1:]]
     book = parse_book(_raw(pages, order=(1, 2)))
     assert book.pages[0].action == "idle"
     assert book.order_pages == [1, 2, 4, 6]  # 단계마다 첫 쪽

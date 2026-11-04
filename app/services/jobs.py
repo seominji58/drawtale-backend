@@ -20,6 +20,7 @@ from app.services import card_stories
 from app.services.ai_client import get_ai_client
 from app.services.book import STAGES, Book, fallback_book
 from app.services.originals import delete_original
+from app.services.page_motions import NEW_ACTIONS, cap_new, liven
 from app.services.storage import get_storage
 from app.services.story_writer import (
     Line,
@@ -135,7 +136,10 @@ ACTION_MOTIONS: dict[str, str] = {
 }
 DEFAULT_MOTION = "wave_hello_gentle"
 # 렌더 동작 → 쪽 동작 이름 (화면 S-09 장면 층이 쓰는 이름, PAGE_MOTIONS 의 반대)
-MOTION_ACTION = {"run": "run", "walk": "walk", "jumping_gentle": "jump", "dab_gentle": "dance", "wave_hello_gentle": "wave"}
+MOTION_ACTION = {
+    "run": "run", "walk": "walk", "jumping_gentle": "jump", "dab_gentle": "dance", "wave_hello_gentle": "wave",
+    **{a: a for a in NEW_ACTIONS},
+}
 
 # S-05 미리보기. 브라우저 조각 애니메이션은 그림을 네모로 잘라 붙인 것처럼 보여서
 # (사용자, 2026-10-08) 분석 직후 Meta 로 렌더해 둔다.
@@ -258,8 +262,9 @@ def render_clip(character: Character, motion: str) -> RenderResult:
 # 미리보기에 이어 렌더한다 — 아이가 이름을 짓고 카드를 고르는 동안 끝난다
 # 2026-11-03: 걷기 · 뛰기 · 점프 · 춤. 자주 나오는 순서로 그린다 (VM 2코어에서 하나에 10초 안팎)
 # 카드 이야기 512가지에서 많이 쓰는 순 (걷기 1,057쪽 · 점프 387 · 뛰기 316 · 춤 308, 2026-11-03) — 이야기가 필요한 것만 기다리므로
-# 자주 쓰는 것이 먼저 끝나야 덜 기다린다
-PRERENDER_MOTIONS = ("walk", "jumping_gentle", "run", "dab_gentle")
+# 자주 쓰는 것이 먼저 끝나야 덜 기다린다. 숨쉬기(2026-11-04)는 가만히 쪽(45%)이 되어 거의 모든 이야기에 나온다.
+# 다른 새 동작은 미리 만들지 않고 이야기에 나올 때 렌더한다 (page_motions.NEW_PER_STORY)
+PRERENDER_MOTIONS = ("walk", "jumping_gentle", "breathe", "run", "dab_gentle")
 # 미리 렌더 중인 동작의 자리 (motion_clips 값). 실패는 None, 끝나면 경로
 PENDING = ""
 # 이야기를 만들 때 미리 렌더가 아직 돌고 있으면 기다리는 시간. 넘으면 그 쪽들은 멈춘 그림
@@ -598,7 +603,8 @@ def render_story(story: Story, character: Character, storage) -> str | None:
 
 
 # 긴 이야기의 쪽 동작 → 렌더 동작 (2026-11-03 걷기 · 뛰기 · 춤 등록. 전에는 대부분 점프였다).
-# 팔이 뭉개지지 않는 것만 쓴다 (2026-09-29). idle 쪽은 렌더하지 않는다 — 프론트가 멈춘 그림
+# 팔이 뭉개지지 않는 것만 쓴다 (2026-09-29). idle 쪽은 렌더하지 않는다 — 프론트가 멈춘 그림.
+# 새 동작 9개(2026-11-04)는 AI 동작 이름이 쪽 동작 이름과 같다. idle 은 page_motions.liven 이 거의 다 바꾼다
 PAGE_MOTIONS: dict[str, str | None] = {
     "wave": "wave_hello_gentle",
     "walk": "walk",
@@ -606,6 +612,7 @@ PAGE_MOTIONS: dict[str, str | None] = {
     "jump": "jumping_gentle",
     "dance": "dab_gentle",
     "idle": None,
+    **{a: a for a in NEW_ACTIONS},
 }
 # 쪽 음성을 동시에 몇 개까지 만드나. ElevenLabs 요금제마다 동시 요청 한도가 있다
 PAGE_AUDIO_WORKERS = 3
@@ -796,6 +803,11 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     card_stories.book_from_payload(stored.payload, name)
                     if stored is not None
                     else write_story_book(story)
+                )
+                # 가만히 쪽을 쪽 글에 맞는 동작으로, 새로 렌더할 동작은 이야기 하나에 셋까지 (pt_docs 17)
+                cap_new(
+                    liven(book, story.place),
+                    can_render=bool(character.ai_request_id) and character.original_deleted_at is None,
                 )
                 story.text = book.text()
                 audio = (

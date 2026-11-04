@@ -19,12 +19,14 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from app.services.page_motions import NEW_ACTIONS
 from app.services.voices import EMOTION_TAGS, NARRATOR, PROTAGONIST, VOICE_TYPES
 
 STAGES = ("place", "problem", "action", "result")
 STAGE_KO = {"place": "장소", "problem": "문제", "action": "행동", "result": "결과"}
-# 쪽마다 캐릭터가 하는 동작. 렌더 동작과의 연결은 다음 단계 (지금은 이야기 전체에 영상 하나)
-ACTIONS = ("idle", "walk", "run", "jump", "wave", "dance")
+# 쪽마다 캐릭터가 하는 동작. 렌더 동작과의 연결은 jobs.PAGE_MOTIONS.
+# 2026-11-04 동작 9개를 더했다 (page_motions.NEW_ACTIONS, pt_docs 17)
+ACTIONS = ("idle", "walk", "run", "jump", "wave", "dance", *NEW_ACTIONS)
 # 단계마다 쪽 수의 (최소, 최대). 합이 pages 가 되게 split_pages 가 나눈다
 STAGE_PAGES = {"place": (1, 2), "problem": (2, 3), "action": (2, 3), "result": (2, 3)}
 MIN_PAGES, MAX_PAGES = 7, 11
@@ -199,8 +201,11 @@ SYSTEM = """너는 아이가 만든 이야기를 그림책 대본으로 옮겨 �
   아이 말에 이런 것이 있으면 마법이나 상상 도구로 바꿔 쓴다.
 
 [캐릭터 동작]
-- 쪽마다 주인공이 그 쪽에서 하는 동작 action 을 하나 고른다:
-  idle(가만히), walk(걷기), run(뛰기), jump(점프), wave(손 흔들기), dance(춤)
+- 쪽마다 주인공이 그 쪽에서 하는 동작 action 을 하나 고른다. 쪽 글과 기분에 가장 맞는 것으로:
+  walk(걷기), run(뛰기), jump(점프), wave(손 흔들기), dance(춤),
+  breathe(제자리에서 숨 쉬기), shiver(덜덜 떨기), hooray(만세 — 기쁘거나 해냈을 때), point(손가락으로 가리키기),
+  fly(새처럼 날기), swim(헤엄치기), march(씩씩하게 행진), kick(공 차기), search(몸을 숙여 땅을 살피기)
+- 같은 동작을 세 쪽 넘게 이어 쓰지 않는다. 가만히 서 있는 쪽은 breathe 를 쓴다.
 
 {dialogue_rule}[순서 맞추기]
 - order_pages 에 네 단계를 하나씩 대표하는 쪽 번호 4개를 장소 · 문제 · 행동 · 결과 순서로 적는다.
