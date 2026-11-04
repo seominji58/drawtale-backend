@@ -38,6 +38,8 @@ class Story(IdMixin, TimestampMixin, Base):
     # 네 칸 사이에 더 받은 칸 {who, feel_problem, feel_result} — 인물 · 기분 카드 라벨.
     # 2026-10-27 로컬 시험 (회의에서 빼면 지운다). 긴 이야기 대본에만 쓴다
     extras: Mapped[dict | None] = mapped_column(JSON, default=None)
+    # 아이 · 보호자가 정한 책 제목 (S-11 「다 했어요」 · S-12 책장 · S-13, 2026-11-04). 없으면 대본 제목 · 「{장소}에 간 날」
+    title: Mapped[str | None] = mapped_column(String(40), default=None)
     # 긴 이야기 대본 — 제목, 쪽마다 단계 · 동작 · 글 · 아이 말, 순서 맞추기 쪽 (Book.to_json)
     book: Mapped[dict | None] = mapped_column(JSON, default=None)
     text: Mapped[str | None] = mapped_column(Text, default=None)

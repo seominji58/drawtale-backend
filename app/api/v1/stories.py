@@ -21,6 +21,7 @@ from app.schemas.story import (
     StoryCreateRequest,
     StoryCreateResponse,
     StoryResponse,
+    StoryUpdateRequest,
 )
 from app.services import forms
 from app.services.jobs import (
@@ -148,7 +149,29 @@ def get_story(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> StoryResponse:
+    return story_response(owned_story(db, story_id, user))
+
+
+@router.patch(
+    "/{story_id}",
+    response_model=StoryResponse,
+    responses={404: {"model": ErrorResponse}},
+    summary="책 제목 바꾸기 (S-11 「다 했어요」 · S-12 책장 · S-13)",
+)
+def update_story(
+    story_id: uuid.UUID,
+    body: StoryUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> StoryResponse:
     story = owned_story(db, story_id, user)
+    story.title = body.title
+    db.commit()
+    db.refresh(story)
+    return story_response(story)
+
+
+def story_response(story: Story) -> StoryResponse:
     storage = get_storage()
     # 짧은 이야기의 동작 영상 옆 투명 프레임 묶음 (2026-11-03) — 화면이 긴 이야기처럼 장면 층으로 쌓는다
     clip = story.animation_blob_path if (story.animation_blob_path or "").endswith(".mp4") else None
@@ -170,9 +193,11 @@ def get_story(
         voice_mode=story.voice_mode,
         protagonist_voice=story.protagonist_voice,
         protagonist_name=story.protagonist_name,
+        title=story.title,
         length=story.length,
         narrator=Narrator.guardian if story.narrator_voice_id else Narrator.default,
-        book=book_response(story.book, storage),
+        # 정한 제목이 있으면 책 제목도 그것으로 (책장 · 쪽 머리가 같은 제목)
+        book=book_response({**story.book, "title": story.title} if story.book and story.title else story.book, storage),
         text=story.text,
         audio_url=storage.url(story.audio_blob_path),
         animation_url=storage.url(story.animation_blob_path),

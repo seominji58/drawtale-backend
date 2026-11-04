@@ -547,6 +547,16 @@ AI 는 머리 쪽을 몸이 굵은 쪽으로 추측해 꼬리가 굵은 그림(�
 - 에러: `409 CHARACTER_NOT_READY` (분석 전) · `422 FORM_HAS_NO_SIDE` (2족형) · `409 ORIGINAL_DELETED` (원본을 지운 뒤)
 - AI 에는 3장 analyze 에 `facing=left|right` 를 함께 보낸다 (없으면 AI 가 추측)
 
+### 2-15. `PATCH /api/v1/stories/{story_id}` — 책 제목 바꾸기 (2026-11-04)
+
+S-11 「다 했어요」의 「책 제목」 · S-12 책장 · S-13 제목 바꾸기. 전에는 고친 제목이 기기에만 있어 다른 기기 · 다시 로그인하면 처음 제목이었다.
+
+- 요청 `{ "title": "용감한 도토리" }` — 1~20자, 앞뒤 · 겹친 빈칸은 하나로. 빈 제목 · 21자 이상은 `422`
+- 응답 `200` — 2-6 과 같은 이야기. `title` 에 정한 제목, 긴 이야기면 `book.title` 도 그 제목
+- 2-6 응답의 `title` 은 정한 제목이 없으면 `null` — 화면이 `book.title` · 「{장소}에 간 날」을 쓴다
+- 에러: `404 STORY_NOT_FOUND` (없거나 남의 이야기)
+- DB: `stories.title` (nullable, 마이그레이션 `a6b7c8d9e0f1`)
+
 ### 2-12. `/api/v1/me/voice` — 보호자 목소리 (나레이터 대신, 2026-11-02)
 
 보호자 모드. **로그인 필요** (`Authorization: Bearer`, 없으면 `401 UNAUTHORIZED`). 아이 목소리는 받지 않는다.

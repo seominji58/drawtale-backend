@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.common import JobStatus
 
@@ -203,6 +203,9 @@ class StoryResponse(BaseModel):
     voice_mode: VoiceMode
     protagonist_voice: ProtagonistVoice
     protagonist_name: str | None
+    title: str | None = Field(
+        default=None, description="아이 · 보호자가 정한 책 제목 (PATCH /stories/{id}). 없으면 null — 화면이 book.title · 「{장소}에 간 날」"
+    )
     length: StoryLength
     narrator: Narrator = Field(
         default=Narrator.default, description="실제로 읽은 나레이터. guardian 이면 보호자 목소리"
@@ -236,6 +239,20 @@ class StoryResponse(BaseModel):
     )
     created_at: datetime
     updated_at: datetime
+
+
+class StoryUpdateRequest(BaseModel):
+    """책 제목 바꾸기 (S-11 · S-12 · S-13)."""
+
+    title: str = Field(min_length=1, max_length=20, description="책 제목. 앞뒤 빈칸은 뺀다")
+
+    @field_validator("title")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("제목이 비었어요")
+        return v
 
 
 class ActivityCreateRequest(BaseModel):
