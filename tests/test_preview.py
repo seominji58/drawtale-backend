@@ -31,6 +31,7 @@ def _character(**kw):
         image_height=10,
         corrections=[],
         ai_joints=JOINTS,
+        form="biped",
     )
     return SimpleNamespace(**{**base, **kw})
 

@@ -33,6 +33,10 @@ class Character(IdMixin, TimestampMixin, Base):
     ai_joints: Mapped[list | None] = mapped_column(JSON, default=None)
     # 캐릭터 검출 점수 (0~1). 낮으면 프론트가 어른 확인을 권한다 (S-05-05)
     detection_confidence: Mapped[float | None] = mapped_column(Float, default=None)
+    # 형태 — 그림의 몸 구조 (pt_docs 19). 관절 이름이 형태마다 다르다 (app/services/forms.py)
+    form: Mapped[str] = mapped_column(String(20), default="biped", server_default="biped")
+    # AI 가 관절을 실제로 찾았나. False 면 형태의 기본 뼈대 — 화면이 관절 고치기로. 예전 캐릭터는 None
+    joints_found: Mapped[bool | None] = mapped_column(Boolean, default=None)
     mask_blob_path: Mapped[str | None] = mapped_column(String(500), default=None)
     # 배경을 투명하게 잘라 낸 캐릭터 PNG (AI 가 분석할 때 만든다, 2026-11-03).
     # 화면이 영상 대신 정지 그림을 보일 때 쓴다 — 원본을 쓰면 사진 배경까지 나왔다.

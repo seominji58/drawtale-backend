@@ -28,7 +28,8 @@ from app.schemas.character import (
     CharacterResponse,
     JointsUpdateRequest,
 )
-from app.schemas.common import AIJoint, BBox, ErrorResponse, JobStatus, JobType, Joint
+from app.schemas.common import AIJoint, BBox, ErrorResponse, JobStatus, JobType, Joint, validate_full_skeleton
+from app.services import forms
 from app.services.jobs import (
     current_joints,
     run_analyze_job,
@@ -74,6 +75,8 @@ def to_response(character: Character) -> CharacterResponse:
         analysis=analysis,
         joints=[Joint.model_validate(j) for j in joints] if joints else None,
         joints_corrected=bool(character.corrections),
+        form=character.form,
+        joints_found=character.joints_found,
         keep_original=character.keep_original,
         original_deleted_at=character.original_deleted_at,
         created_at=character.created_at,
@@ -96,10 +99,16 @@ def create_character(
         False,
         description="S-13 「원본 그림 보관」. false 면 그림을 떠날 때, 늦어도 보관 시간 뒤 지운다",
     ),
+    form: str = Form(
+        "biped",
+        description="그림의 몸 구조 (GET /api/v1/forms). 없으면 사람(2족형). 화면 「누구를 그렸어요?」 (pt_docs 19)",
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> CharacterCreateResponse:
     rate_limit.check("analyze", request, user)
+    if not forms.get(form).get("ready", True):
+        raise AppError("UNKNOWN_FORM", "아직 준비 중인 모양이에요.", 422, {"form": form})
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
     data = image.file.read(max_bytes + 1)
     if len(data) > max_bytes:
@@ -133,6 +142,7 @@ def create_character(
             image_width=width,
             image_height=height,
             keep_original=keep_original,
+            form=form,
         )
         job = Job(type=JobType.analyze, character_id=character_id)
         db.add(character)
@@ -182,6 +192,13 @@ def update_joints(
     character = owned_character(db, character_id, user)
     if character.status != JobStatus.succeeded:
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 관절을 수정할 수 있어요.", 409)
+    # 그 캐릭터 형태의 관절이 빠짐없이 한 번씩 (형태마다 이름이 다르다 — pt_docs 19)
+    try:
+        body.joints = validate_full_skeleton(body.joints, forms.joint_order(character.form))
+    except ValueError as e:
+        # 예전과 같은 코드 (요청 검사 실패와 같게) — 화면이 이 코드를 본다
+        raise AppError("VALIDATION_ERROR", "관절이 모자라거나 이 모양의 관절이 아니에요.", 422,
+                       {"form": character.form}) from e
     out_of_image = [
         j.name for j in body.joints if j.x > character.image_width or j.y > character.image_height
     ]

@@ -60,6 +60,7 @@ def _character(**kw):
         image_height=10,
         corrections=[],
         ai_joints=JOINTS,
+        form="biped",
         original_deleted_at=None,
         preview_blob_path=None,
         motion_clips=None,

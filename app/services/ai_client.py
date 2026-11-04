@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.services import forms
 from app.schemas.ai import (
     UNKNOWN,
     AIAnalyzeRaw,
@@ -82,9 +83,10 @@ def normalize_analyze(raw: AIAnalyzeRaw) -> AnalyzeResult:
         raise AppError("AI_INVALID_RESPONSE", "AI 응답 형식이 올바르지 않아요.", 502)
     try:
         joints = validate_full_skeleton(
-            [AIJoint(name=j.name, x=j.x, y=j.y, score=_unit(j.score)) for j in raw.joints]
+            [AIJoint(name=j.name, x=j.x, y=j.y, score=_unit(j.score)) for j in raw.joints],
+            forms.joint_order(raw.form),
         )
-    except (ValueError, ValidationError) as e:
+    except (ValueError, ValidationError, AppError) as e:
         log.warning("AI returned an invalid skeleton: %s", e)
         raise AppError("AI_INVALID_RESPONSE", "AI 응답 형식이 올바르지 않아요.", 502) from e
     b = raw.bbox
@@ -93,6 +95,8 @@ def normalize_analyze(raw: AIAnalyzeRaw) -> AnalyzeResult:
         joints=joints,
         confidence=_unit(raw.confidence),
         request_id=raw.request_id,
+        form=raw.form,
+        joints_found=raw.joints_found,
         model_version=raw.model_version or UNKNOWN,
         pipeline_version=raw.pipeline_version or UNKNOWN,
         coordinate_space=raw.coordinate_space or UNKNOWN,
@@ -131,8 +135,17 @@ class HttpAIClient:
         except ValueError as e:
             raise AppError("AI_INVALID_RESPONSE", "AI 응답 형식이 올바르지 않아요.", 502) from e
 
-    def analyze(self, image: bytes, filename: str) -> AnalyzeResult:
-        res = self._post("/internal/v1/analyze", files={"file": (filename, image)})
+    def forms(self) -> list[dict]:
+        """형태 정의 전부 (AI GET /internal/v1/forms, pt_docs 19). 예전 AI 서버면 404 → 호출하는 쪽이 2족형만 쓴다."""
+
+        res = self.client.get("/internal/v1/forms")
+        res.raise_for_status()
+        return list(res.json()["forms"])
+
+    def analyze(self, image: bytes, filename: str, form: str = "biped") -> AnalyzeResult:
+        # 2족형은 form 을 보내지 않는다 — 형태를 모르는 예전 AI 서버도 그대로 돈다
+        res = self._post("/internal/v1/analyze", files={"file": (filename, image)},
+                         **({"data": {"form": form}} if form != "biped" else {}))
         try:
             raw = AIAnalyzeRaw.model_validate(self._json(res))
         except ValidationError as e:
@@ -215,6 +228,28 @@ _MOCK_POSE: dict[JointName, tuple[float, float]] = {
 }
 
 
+# 목 AI 의 4족형 (drawtale-ai forms/quadruped.json 과 관절 이름 · 부모 · 동작이 같다). 옆모습, 머리는 오른쪽
+_MOCK_QUADRUPED_POSE: dict[str, tuple[float, float]] = {
+    "hip": (0.30, 0.45), "torso": (0.70, 0.35), "neck": (0.76, 0.20),
+    "right_hip_b": (0.32, 0.55), "right_knee_b": (0.32, 0.75), "right_foot_b": (0.32, 0.96),
+    "left_hip_b": (0.20, 0.55), "left_knee_b": (0.20, 0.75), "left_foot_b": (0.20, 0.96),
+    "right_hip_f": (0.80, 0.55), "right_knee_f": (0.80, 0.75), "right_foot_f": (0.80, 0.96),
+    "left_hip_f": (0.66, 0.55), "left_knee_f": (0.66, 0.75), "left_foot_f": (0.66, 0.96),
+}
+_MOCK_QUADRUPED_FORM: dict = {
+    "id": "quadruped", "label": "4족형", "group": "nonhumanoid", "kid_label": "네 발로 걷는 친구",
+    "examples": ["강아지", "고양이", "공룡"], "view": "side", "ready": True,
+    "joints": [{"name": n, "parent": p, "label": n} for n, p in (
+        ("hip", "root"), ("torso", "hip"), ("neck", "torso"),
+        ("right_hip_b", "root"), ("right_knee_b", "right_hip_b"), ("right_foot_b", "right_knee_b"),
+        ("left_hip_b", "root"), ("left_knee_b", "left_hip_b"), ("left_foot_b", "left_knee_b"),
+        ("right_hip_f", "root"), ("right_knee_f", "right_hip_f"), ("right_foot_f", "right_knee_f"),
+        ("left_hip_f", "root"), ("left_knee_f", "left_hip_f"), ("left_foot_f", "left_knee_f"))],
+    "motions": {"walk": "quadruped/walk.yaml", "run": "quadruped/run.yaml"},
+    "hero": {"fit": "width", "facing": "auto"},
+}
+
+
 class MockAIClient:
     """Returns contract-shaped fake results so Backend/Frontend work before the AI is ready."""
 
@@ -230,10 +265,15 @@ class MockAIClient:
     def cutout(self, request_id: str) -> bytes | None:
         return None
 
-    def analyze(self, image: bytes, filename: str) -> AnalyzeResult:
+    def forms(self) -> list[dict]:
+        """2족형 사본 + 시험용 4족형 (관절 이름 · 동작만 AI 와 같게)."""
+        return [forms._BIPED, _MOCK_QUADRUPED_FORM]
+
+    def analyze(self, image: bytes, filename: str, form: str = "biped") -> AnalyzeResult:
         start = time.perf_counter()
         w, h = self.image_size or (512, 512)
         bbox = BBox(x=w * 0.2, y=h * 0.1, width=w * 0.6, height=h * 0.8)
+        pose = _MOCK_QUADRUPED_POSE if form == "quadruped" else _MOCK_POSE
         joints = [
             AIJoint(
                 name=name,
@@ -241,13 +281,14 @@ class MockAIClient:
                 y=round(bbox.y + ry * bbox.height, 1),
                 score=0.9,
             )
-            for name, (rx, ry) in _MOCK_POSE.items()
+            for name, (rx, ry) in pose.items()
         ]
         return AnalyzeResult(
             bbox=bbox,
             joints=joints,
             confidence=0.95,
             request_id="mock-session",
+            form=form,
             model_version=self.model_version,
             pipeline_version=self.pipeline_version,
             coordinate_space=COORDINATE_SPACE,
