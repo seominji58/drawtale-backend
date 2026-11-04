@@ -235,6 +235,7 @@ _MOCK_QUADRUPED_POSE: dict[str, tuple[float, float]] = {
     "left_hip_b": (0.20, 0.55), "left_knee_b": (0.20, 0.75), "left_foot_b": (0.20, 0.96),
     "right_hip_f": (0.80, 0.55), "right_knee_f": (0.80, 0.75), "right_foot_f": (0.80, 0.96),
     "left_hip_f": (0.66, 0.55), "left_knee_f": (0.66, 0.75), "left_foot_f": (0.66, 0.96),
+    "tail": (0.14, 0.40), "tail_mid": (0.08, 0.30), "tail_tip": (0.04, 0.18),
 }
 _MOCK_QUADRUPED_FORM: dict = {
     "id": "quadruped", "label": "4족형", "group": "nonhumanoid", "kid_label": "네 발로 걷는 친구",
@@ -244,7 +245,8 @@ _MOCK_QUADRUPED_FORM: dict = {
         ("right_hip_b", "root"), ("right_knee_b", "right_hip_b"), ("right_foot_b", "right_knee_b"),
         ("left_hip_b", "root"), ("left_knee_b", "left_hip_b"), ("left_foot_b", "left_knee_b"),
         ("right_hip_f", "root"), ("right_knee_f", "right_hip_f"), ("right_foot_f", "right_knee_f"),
-        ("left_hip_f", "root"), ("left_knee_f", "left_hip_f"), ("left_foot_f", "left_knee_f"))],
+        ("left_hip_f", "root"), ("left_knee_f", "left_hip_f"), ("left_foot_f", "left_knee_f"),
+        ("tail", "hip"), ("tail_mid", "tail"), ("tail_tip", "tail_mid"))],
     "motions": {"walk": "quadruped/walk.yaml", "run": "quadruped/run.yaml"},
     "hero": {"fit": "width", "facing": "auto"},
 }

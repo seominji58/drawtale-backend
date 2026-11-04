@@ -208,7 +208,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 - Frontend 는 `confidence < 0.6` 이거나 `score < 0.4` 인 관절이 하나라도 있으면 어른 확인(S-05 「어른에게 도움 받기」)을 권하고, S-06 에서 그 관절을 따로 표시한다
 - `joints`: **현재 사용할 관절** — 사용자가 보정했으면 보정값, 아니면 AI 값. `score` 는 없다
 - `joints_corrected`: 사용자가 한 번이라도 보정했는지
-- `form` (2026-11-04): 형태. 관절 이름은 2-13 의 그 형태 `joints` 와 같다 (2족형은 위 15개, 4족형은 `right_hip_b` · `left_foot_f` …)
+- `form` (2026-11-04): 형태. 관절 이름은 2-13 의 그 형태 `joints` 와 같다 (2족형은 위 15개, 4족형은 `right_hip_b` · `left_foot_f` … · 꼬리 `tail` · `tail_mid` · `tail_tip` 18개. 꼬리가 없는 그림은 꼬리 셋이 `hip` 과 같은 자리)
 - `joints_found` (2026-11-04): AI 가 관절을 **실제로 찾았나**. `false` 면 그 형태의 **기본 뼈대를 그림 크기에 맞춰 놓은 것**이라
   Frontend 는 관절 고치기(S-06)로 보낸다 — 기본 · 보호자 모드 모두. 예전 캐릭터는 `null`(찾은 것으로 본다)
 - `analysis.cutout_url` (2026-11-03): **배경을 투명하게 잘라 낸 캐릭터 PNG.** AI 가 분석할 때 만든다(3-4).
@@ -224,7 +224,7 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 ### 2-4. `PATCH /api/v1/characters/{character_id}/joints` — 관절 보정 저장
 
-**요청** — **그 캐릭터 형태의 관절** 전부를 보낸다 (움직이지 않은 관절 포함, 2족형 · 4족형 모두 15개). 순서는 상관없고 서버가 형태의 순서로 정렬한다.
+**요청** — **그 캐릭터 형태의 관절** 전부를 보낸다 (움직이지 않은 관절 포함, 2족형 15개 · 4족형 18개). 순서는 상관없고 서버가 형태의 순서로 정렬한다.
 다른 형태의 관절이거나 모자라면 `422 VALIDATION_ERROR` (`detail.form`).
 
 ```json
@@ -522,7 +522,7 @@ S-10 을 한 번 할 때마다 하나를 보낸다. 맞혀서 S-11 로 가면 `c
     "guide": ["점을 끌어서 몸에 맞게 옮겨 주세요"], "hero": { "fit": "height", "facing": "front" }, "ready": true },
   { "id": "quadruped", "label": "4족형", "group": "nonhumanoid", "kid_label": "네 발로 걷는 친구",
     "examples": ["강아지", "고양이", "공룡"], "view": "side",
-    "joints": [ { "name": "hip", "parent": "root", "label": "엉덩이" }, "… right_hip_b · left_foot_f 등 15개" ],
+    "joints": [ { "name": "hip", "parent": "root", "label": "엉덩이" }, "… right_hip_b · left_foot_f · tail 등 18개" ],
     "guide": ["엉덩이 → 어깨 → 목 → 뒷다리 → 앞다리 순서예요", "…"], "hero": { "fit": "width", "facing": "auto" }, "ready": true }
 ] }
 ```

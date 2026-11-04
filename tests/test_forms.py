@@ -25,7 +25,7 @@ def test_forms_list_for_screen(client):
     ids = [f["id"] for f in body["forms"]]
     assert ids[:2] == ["biped", "quadruped"]
     quad = body["forms"][1]
-    assert quad["kid_label"] == "네 발로 걷는 친구" and len(quad["joints"]) == 15
+    assert quad["kid_label"] == "네 발로 걷는 친구" and len(quad["joints"]) == 18   # 다리 12 · 몸 3 · 꼬리 3
     assert "motions" not in quad and "retarget" not in quad   # AI 안쪽 값은 화면에 내주지 않는다
 
 
