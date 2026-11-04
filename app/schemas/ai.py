@@ -54,6 +54,10 @@ class AIAnalyzeRaw(BaseModel):
     joints: list[AIJointRaw] = Field(default_factory=list)
     # 캐릭터 검출 점수. 이 값을 보내지 않는 AI 서버도 있다
     confidence: float | None = None
+    # 형태 (pt_docs 19). 예전 AI 서버는 보내지 않는다 — 사람(2족형)
+    form: str = "biped"
+    # 관절을 실제로 찾았나. False 면 형태의 기본 뼈대 — 화면이 관절 고치기로 보낸다
+    joints_found: bool = True
     mask: AIMaskRaw | None = None
     message: str | None = None
     # Required by the contract; optional here until the AI server sends them.
@@ -68,6 +72,8 @@ class AnalyzeResult(AIMeta):
     joints: list[AIJoint]
     confidence: float | None = None
     request_id: str | None = None
+    form: str = "biped"
+    joints_found: bool = True
 
 
 # --- POST /internal/v1/render (not implemented on the AI side yet) --------------------------

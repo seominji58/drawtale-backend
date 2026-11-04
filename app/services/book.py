@@ -337,6 +337,7 @@ def book_prompt(
     name: str | None,
     extras: dict[str, str] | None = None,
     place: str | None = None,
+    hero_form: dict | None = None,
 ) -> str:
     n = split_pages(pages)
     if characters:
@@ -363,7 +364,33 @@ def book_prompt(
         # JSON 형식 안내 바로 앞에 넣는다
         head, tail = prompt.split("JSON 으로만 답한다.", 1)
         prompt = head + EXTRA_RULES.lstrip("\n") + "\nJSON 으로만 답한다." + tail
+    if hero_form:
+        head, tail = prompt.split("JSON 으로만 답한다.", 1)
+        prompt = head + FORM_RULE.format(**form_words(hero_form)) + "\nJSON 으로만 답한다." + tail
     return prompt
+
+
+# 주인공 그림이 사람이 아닐 때 (pt_docs 19). 「누구를 그렸어요?」에서 고른 형태의 화면 이름 · 예시로 알린다.
+# 쪽 동작은 그 형태가 렌더할 수 있는 것과 가만히(idle)만 — 나머지는 jobs.fit_form 이 다시 바꾼다
+FORM_RULE = """[주인공 모습]
+- 아이가 그린 주인공은 {kid_label}다 (예: {examples}). 사람이 아니다.
+- 주인공이 손으로 하는 행동(손 흔들기 · 손잡기 · 박수 · 손으로 집기)을 쓰지 않는다.
+  대신 몸 · 발 · 꼬리 · 코로 한다 (뛰어가기, 냄새 맡기, 꼬리 흔들기, 코로 밀기).
+- action 은 {actions} 중에서만 고른다.
+"""
+
+
+def form_words(form: dict) -> dict[str, str]:
+    from app.services.jobs import PAGE_MOTIONS   # jobs 가 이 파일을 불러 쓴다 — 순환을 피한다
+
+    # 형태 정의의 동작은 AI 동작 이름(jumping_gentle)이다 — 쪽 동작 이름(jump)으로 바꿔 알린다
+    motions = set(form.get("motions") or {})
+    actions = [a for a in ACTIONS if PAGE_MOTIONS.get(a) in motions]
+    return {
+        "kid_label": form.get("kid_label", "다른 모습 친구"),
+        "examples": " · ".join(form.get("examples") or []) or "동물",
+        "actions": ", ".join([*actions, "idle"]),
+    }
 
 
 # 카드 이야기를 미리 만들 때(services/card_stories) 조합마다 돌아가며 주는 첫 쪽 시작 방식.

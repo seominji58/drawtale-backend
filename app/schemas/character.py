@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.common import AIJoint, BBox, JobStatus, Joint, validate_full_skeleton
+from app.schemas.common import AIJoint, BBox, JobStatus, Joint
 
 
 class CharacterCreateResponse(BaseModel):
@@ -43,6 +43,10 @@ class CharacterResponse(BaseModel):
     analysis: Analysis | None
     joints: list[Joint] | None
     joints_corrected: bool
+    # 형태 (pt_docs 19). 관절 이름 · 개수가 형태마다 다르다 — GET /api/v1/forms 의 joints
+    form: str = "biped"
+    # AI 가 관절을 실제로 찾았나. false 면 형태의 기본 뼈대 — 화면이 관절 고치기로 보낸다. 예전 캐릭터는 null
+    joints_found: bool | None = None
     keep_original: bool
     original_deleted_at: datetime | None
     created_at: datetime
@@ -54,5 +58,8 @@ class JointsUpdateRequest(BaseModel):
 
     @field_validator("joints")
     @classmethod
-    def _full_skeleton(cls, v: list[Joint]) -> list[Joint]:
-        return validate_full_skeleton(v)
+    def _no_duplicates(cls, v: list[Joint]) -> list[Joint]:
+        # 그 캐릭터 형태의 관절인지는 API 가 캐릭터를 읽은 뒤 본다 (validate_full_skeleton(v, forms.joint_order(form)))
+        if len({j.name for j in v}) != len(v):
+            raise ValueError("joints must not repeat a name")
+        return v

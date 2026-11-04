@@ -133,6 +133,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 - Content-Type: `multipart/form-data`
 - 필드: `image` (PNG 또는 JPG, 최대 10MB)
+- 필드: `form` (선택, 기본 `biped`, 2026-11-04) — 그림의 몸 구조, **형태**(pt_docs 19). 값은 2-13 `GET /api/v1/forms` 의 `id`.
+  화면 「누구를 그렸어요?」에서 고른 것. 준비 안 된 형태 · 없는 형태면 `422 UNKNOWN_FORM`. 형태마다 관절 이름 · 개수가 다르다
 - 필드: `keep_original` (선택, 기본 `false`) — S-13 「원본 그림 보관」. `false` 면 원본을 2-10 으로 지우거나, 요청이 없어도 `ORIGINAL_RETENTION_HOURS`(기본 24시간) 뒤 서버가 지운다. 분석에 실패한 그림은 바로 지운다
 
 **응답 `202`**
@@ -191,6 +193,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
   },
   "joints": [ { "name": "hip", "x": 200.0, "y": 324.0 }, "... 15개" ],
   "joints_corrected": false,
+  "form": "biped",
+  "joints_found": true,
   "keep_original": false,
   "original_deleted_at": null,
   "created_at": "...",
@@ -204,6 +208,9 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 - Frontend 는 `confidence < 0.6` 이거나 `score < 0.4` 인 관절이 하나라도 있으면 어른 확인(S-05 「어른에게 도움 받기」)을 권하고, S-06 에서 그 관절을 따로 표시한다
 - `joints`: **현재 사용할 관절** — 사용자가 보정했으면 보정값, 아니면 AI 값. `score` 는 없다
 - `joints_corrected`: 사용자가 한 번이라도 보정했는지
+- `form` (2026-11-04): 형태. 관절 이름은 2-13 의 그 형태 `joints` 와 같다 (2족형은 위 15개, 4족형은 `right_hip_b` · `left_foot_f` … · 꼬리 `tail` · `tail_mid` · `tail_tip` 18개. 꼬리가 없는 그림은 꼬리 셋이 `hip` 과 같은 자리)
+- `joints_found` (2026-11-04): AI 가 관절을 **실제로 찾았나**. `false` 면 그 형태의 **기본 뼈대를 그림 크기에 맞춰 놓은 것**이라
+  Frontend 는 관절 고치기(S-06)로 보낸다 — 기본 · 보호자 모드 모두. 예전 캐릭터는 `null`(찾은 것으로 본다)
 - `analysis.cutout_url` (2026-11-03): **배경을 투명하게 잘라 낸 캐릭터 PNG.** AI 가 분석할 때 만든다(3-4).
   화면이 영상 대신 정지 그림을 보일 때(미리보기를 만드는 중 · 가만히 있는 쪽 · 완료 화면 · 책장 표지) 원본 대신 쓴다 —
   원본은 사진 배경까지 나온다. 없으면(목 AI · 예전 분석) `null`. 원본을 지우면(2-10) 같이 지운다
@@ -217,7 +224,8 @@ Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
 
 ### 2-4. `PATCH /api/v1/characters/{character_id}/joints` — 관절 보정 저장
 
-**요청** — 15개 전부를 보낸다 (움직이지 않은 관절 포함). 순서는 상관없고 서버가 표준 순서로 정렬한다.
+**요청** — **그 캐릭터 형태의 관절** 전부를 보낸다 (움직이지 않은 관절 포함, 2족형 15개 · 4족형 18개). 순서는 상관없고 서버가 형태의 순서로 정렬한다.
+다른 형태의 관절이거나 모자라면 `422 VALIDATION_ERROR` (`detail.form`).
 
 ```json
 {
@@ -501,6 +509,41 @@ S-10 을 한 번 할 때마다 하나를 보낸다. 맞혀서 S-11 로 가면 `c
 **응답 `201`** — 요청 필드 + `id`, `story_id`, `created_at`. 없는 이야기는 `404 STORY_NOT_FOUND`.
 
 `GET /api/v1/stories/{story_id}/activity` 는 그 이야기의 기록을 오래된 것부터 배열로 준다 (어른 화면용, 아직 쓰는 화면 없음).
+
+### 2-13. `GET /api/v1/forms` — 형태 목록 (2026-11-04, pt_docs 19)
+
+그림의 몸 구조. 화면이 「누구를 그렸어요?」(두 단계 버튼) · 관절 고치기(S-06)를 그릴 때 쓴다 — **관절 이름을 화면 코드에 적지 않는다.**
+원본은 AI 서버의 형태 정의(`drawtale-ai runtime/ai_server/forms/*.json`). Backend 가 받아 두고(10분), AI 가 꺼져 있으면 2족형만 준다.
+**준비된 형태만** 보낸다 — 화면은 받은 것만 버튼으로 보인다(준비 안 된 형태는 숨김).
+
+```json
+{ "forms": [
+  { "id": "biped", "label": "2족형", "group": "humanoid", "kid_label": "두 발로 서는 친구",
+    "examples": ["사람", "곰인형", "펭귄"], "view": "front",
+    "joints": [ { "name": "hip", "parent": "root", "label": "엉덩이" }, "… 15개" ],
+    "guide": ["점을 끌어서 몸에 맞게 옮겨 주세요"], "hero": { "fit": "height", "facing": "front" }, "ready": true },
+  { "id": "quadruped", "label": "4족형", "group": "nonhumanoid", "kid_label": "네 발로 걷는 친구",
+    "examples": ["강아지", "고양이", "공룡"], "view": "side",
+    "joints": [ { "name": "hip", "parent": "root", "label": "엉덩이" }, "… right_hip_b · left_foot_f · tail 등 18개" ],
+    "guide": ["엉덩이 → 어깨 → 목 → 뒷다리 → 앞다리 순서예요", "…"], "hero": { "fit": "width", "facing": "auto" }, "ready": true }
+] }
+```
+
+- `group`: `humanoid`(1단계 「두 발로 서는 친구」) · `nonhumanoid`(1단계 「다른 모습 친구」 → 2단계에서 형태별 버튼)
+- `joints[].parent`: 뼈를 이을 부모. `root` 는 보이지 않는 뿌리(엉덩이 자리)라 화면에 점으로 그리지 않는다
+- `hero.fit`: 장면(S-09)에 세울 때 키(`height`) / 몸길이(`width`) 기준. 4족형은 옆으로 길다
+- 4족형 이야기: 쪽 동작은 걷기 · 뛰기만 렌더하고 나머지는 가만히(멈춘 그림). 미리 만든 카드 이야기(사람 주인공 글)는 쓰지 않고 대본 AI 가 새로 쓴다
+
+### 2-14. `POST /api/v1/characters/{character_id}/turn` — 얼굴 방향 바꾸기 (2026-11-04)
+
+S-05 「얼굴이 반대쪽이에요」. 옆모습 형태(형태 정의 `hero.facing == "auto"`, 지금은 4족형)만.
+AI 는 머리 쪽을 몸이 굵은 쪽으로 추측해 꼬리가 굵은 그림(악어)에서 틀린다 — 그러면 목 · 어깨 · 꼬리 · 앞뒤 다리가 모두 뒤집힌다.
+같은 그림을 **머리 쪽만 지금과 반대로** 다시 분석한다 (지금 머리 쪽 = 목이 엉덩이보다 왼쪽이면 왼쪽).
+
+- 응답 `202` — 2-1 과 같은 `{ character_id, job_id, status }`. 화면은 2-1 처럼 Job 을 기다린 뒤 2-3 으로 다시 읽는다
+- 고친 관절 기록은 지운다 (`joints_corrected` → false). 미리보기 · 쪽 동작은 다시 만든다 (`preview_status` → `rendering`)
+- 에러: `409 CHARACTER_NOT_READY` (분석 전) · `422 FORM_HAS_NO_SIDE` (2족형) · `409 ORIGINAL_DELETED` (원본을 지운 뒤)
+- AI 에는 3장 analyze 에 `facing=left|right` 를 함께 보낸다 (없으면 AI 가 추측)
 
 ### 2-12. `/api/v1/me/voice` — 보호자 목소리 (나레이터 대신, 2026-11-02)
 

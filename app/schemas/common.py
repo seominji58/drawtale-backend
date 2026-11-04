@@ -30,7 +30,8 @@ COORDINATE_SPACE = "image_px"
 
 
 class Joint(BaseModel):
-    name: JointName
+    # 형태마다 관절 이름이 다르다 (2족형은 JointName, 4족형은 right_hip_b … — pt_docs 19). 검사는 validate_full_skeleton
+    name: str = Field(min_length=1, max_length=40)
     x: float = Field(ge=0, description="원본 이미지 기준 x (px)")
     y: float = Field(ge=0, description="원본 이미지 기준 y (px)")
 
@@ -72,9 +73,11 @@ class ErrorResponse(BaseModel):
     error: ErrorInfo
 
 
-def validate_full_skeleton(joints: list[Joint]) -> list[Joint]:
-    names = [j.name for j in joints]
-    if sorted(names) != sorted(JOINT_ORDER) or len(names) != len(JOINT_ORDER):
-        raise ValueError(f"joints must contain each of the {len(JOINT_ORDER)} joints exactly once")
-    order = {n: i for i, n in enumerate(JOINT_ORDER)}
-    return sorted(joints, key=lambda j: order[j.name])
+def validate_full_skeleton(joints: list[Joint], order: list[str] | None = None) -> list[Joint]:
+    """그 형태의 관절이 빠짐없이 한 번씩 있는지. order 를 주지 않으면 2족형(JOINT_ORDER). 형태의 순서로 정렬한다."""
+    want = list(order) if order is not None else [str(n) for n in JOINT_ORDER]
+    names = [str(j.name) for j in joints]
+    if sorted(names) != sorted(want) or len(names) != len(want):
+        raise ValueError(f"joints must contain each of the {len(want)} joints exactly once")
+    index = {n: i for i, n in enumerate(want)}
+    return sorted(joints, key=lambda j: index[str(j.name)])

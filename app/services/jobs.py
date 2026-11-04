@@ -21,7 +21,8 @@ from app.services import card_stories
 from app.services.ai_client import get_ai_client
 from app.services.book import STAGES, Book, fallback_book
 from app.services.originals import delete_original
-from app.services.page_motions import NEW_ACTIONS, cap_new, liven
+from app.services import forms
+from app.services.page_motions import FALLBACK, NEW_ACTIONS, cap_new, liven
 from app.services.storage import get_storage
 from app.services.story_writer import (
     Line,
@@ -86,7 +87,15 @@ def current_joints(character: Character) -> list[dict] | None:
     return character.ai_joints
 
 
-def run_analyze_job(job_id: uuid.UUID) -> None:
+def facing_of(joints: list[dict] | None) -> str | None:
+    """옆모습 형태의 머리 쪽 — 목이 엉덩이보다 왼쪽이면 left (AI 렌더도 같은 기준으로 동작을 뒤집는다)."""
+    at = {j["name"]: j for j in joints or []}
+    if "neck" not in at or "hip" not in at:
+        return None
+    return "left" if at["neck"]["x"] < at["hip"]["x"] else "right"
+
+
+def run_analyze_job(job_id: uuid.UUID, facing: str | None = None) -> None:
     with db_session.SessionLocal() as db:
         job = db.get(Job, job_id)
         character = db.get(Character, job.character_id)
@@ -98,10 +107,11 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
         try:
             ai = get_ai_client((character.image_width, character.image_height))
             path = character.upload_blob_path
-            res = ai.analyze(storage.read(path), filename=path.rsplit("/", 1)[-1])
+            res = ai.analyze(storage.read(path), filename=path.rsplit("/", 1)[-1], form=character.form, facing=facing)
             character.bbox = res.bbox.model_dump()
             character.ai_joints = [j.model_dump(mode="json") for j in res.joints]
             character.detection_confidence = res.confidence
+            character.joints_found = res.joints_found
             character.ai_request_id = res.request_id
             character.model_version = res.model_version
             character.pipeline_version = res.pipeline_version
@@ -189,8 +199,10 @@ def make_preview(character: Character, storage) -> str | None:
 
     if not character.ai_request_id:
         return None
+    # 사람이 아닌 형태(4족형)는 손 흔들기가 없다 — 걷기로 (pt_docs 19 6장)
+    motion = DEFAULT_MOTION if forms.render_motions(character.form) is None else "walk"
     try:
-        result = render_clip(character, DEFAULT_MOTION)
+        result = render_clip(character, motion)
     except Exception:
         log.exception("미리보기 렌더 실패, 브라우저 애니메이션으로 대신합니다")
         return None
@@ -330,10 +342,12 @@ def _store_previews(db, character: Character, storage) -> None:
     db.refresh(character)
     if character.motion_clips != {}:
         return  # 그사이 다시 시작했거나 원본을 지웠다
-    written: dict[str, str | None] = {m: PENDING for m in PRERENDER_MOTIONS}
+    allowed = forms.render_motions(character.form)
+    motions = [m for m in PRERENDER_MOTIONS if allowed is None or m in allowed]   # 형태가 할 수 있는 것만
+    written: dict[str, str | None] = {m: PENDING for m in motions}
     character.motion_clips = dict(written)
     db.commit()
-    for motion in PRERENDER_MOTIONS:
+    for motion in motions:
         try:
             result = render_clip(character, motion)
         except Exception:
@@ -443,8 +457,9 @@ def write_story_script(story: Story) -> Script | None:
     return script
 
 
-def write_story_book(story: Story) -> Book:
-    """긴 이야기 대본. 키가 없거나 실패하면 틀 문장 그림책을 쓴다 (부적절한 내용이면 막는다)."""
+def write_story_book(story: Story, form: str = forms.DEFAULT) -> Book:
+    """긴 이야기 대본. 키가 없거나 실패하면 틀 문장 그림책을 쓴다 (부적절한 내용이면 막는다).
+    주인공이 사람이 아닌 형태면(pt_docs 19) 대본 AI 에 그 모습을 알린다 — 손을 쓰는 행동을 쓰지 않게."""
 
     choices = {s: getattr(story, s) for s in STAGES}
     pages = get_settings().story_pages
@@ -464,6 +479,7 @@ def write_story_book(story: Story) -> Book:
             characters,
             name,
             story.extras,
+            hero_form=None if form == forms.DEFAULT else forms.get(form),
         )
     except StoryBlocked:
         raise
@@ -596,6 +612,9 @@ def render_story(story: Story, character: Character, storage) -> str | None:
     없으면 렌더해서 영상 옆에 묶음도 둔다."""
 
     motion = motion_for(story.action)
+    allowed = forms.render_motions(character.form)
+    if allowed is not None and motion not in allowed:
+        motion = "walk"        # 4족형: 행동 카드 동작이 없으면 걷기 (pt_docs 19 6장)
     ready = dict(character.motion_clips or {})
     if character.preview_blob_path:
         ready[DEFAULT_MOTION] = character.preview_blob_path
@@ -640,6 +659,22 @@ PAGE_MOTIONS: dict[str, str | None] = {
     "idle": None,
     **{a: a for a in NEW_ACTIONS},
 }
+def fit_form(book: Book, form: str) -> Book:
+    """그 형태가 렌더할 수 없는 쪽 동작을 바꾼다 (pt_docs 19 6장). 2족형은 그대로.
+
+    대신 동작(page_motions.FALLBACK)을 따라가 렌더할 수 있는 동작이 나오면 그것(행진 → 걷기), 끝까지 없으면
+    가만히(멈춘 그림) — 4족형은 걷기 · 뛰기 · 점프 · 숨쉬기 · 몸 떨기 (AI 형태 정의 motions, 11/4)."""
+    allowed = forms.render_motions(form)
+    if allowed is None:
+        return book
+    for p in book.pages:
+        a: str | None = p.action
+        while a and PAGE_MOTIONS.get(a) not in allowed:
+            a = FALLBACK.get(a)
+        p.action = a or "idle"
+    return book
+
+
 # 쪽 음성을 동시에 몇 개까지 만드나. ElevenLabs 요금제마다 동시 요청 한도가 있다
 PAGE_AUDIO_WORKERS = 3
 
@@ -858,7 +893,8 @@ def run_story_job(job_id: uuid.UUID) -> None:
         stop = lambda: cancelled(job_id)  # noqa: E731
         try:
             # 카드로만 고른 이야기는 사람이 읽고 통과시킨 저장본을 꺼낸다 — 대본 0초 (pt_docs 13 1-1)
-            stored = card_stories.find(db, story)
+            # 미리 만든 카드 이야기는 주인공이 사람이라고 보고 썼다(「손을 흔들었어요」) — 다른 형태는 대본 AI 가 새로 (pt_docs 19)
+            stored = card_stories.find(db, story) if character.form == forms.DEFAULT else None
             name = card_stories.hero_name(story)
             # 보호자 목소리로 읽는 이야기는 만들어 둔 음성(기본 나레이터)을 쓰지 않고,
             # 이 목소리 음성을 함께 쓰는 곳(card_audio)에 두지도 않는다
@@ -873,13 +909,14 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 book = (
                     card_stories.book_from_payload(stored.payload, name)
                     if stored is not None
-                    else write_story_book(story)
+                    else write_story_book(story, character.form)
                 )
                 # 가만히 쪽을 쪽 글에 맞는 동작으로, 새로 렌더할 동작은 이야기 하나에 셋까지 (pt_docs 17)
                 cap_new(
                     liven(book, story.place),
                     can_render=bool(character.ai_request_id) and character.original_deleted_at is None,
                 )
+                fit_form(book, character.form)
                 story.text = book.text()
                 _stop_if_cancelled(job_id)
                 audio = (
