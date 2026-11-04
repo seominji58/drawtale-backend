@@ -58,6 +58,35 @@ def test_unknown_form_is_refused(client, png_bytes):
     assert res.status_code == 422 and res.json()["error"]["code"] == "UNKNOWN_FORM"
 
 
+def _side(character: dict) -> str:
+    at = {j["name"]: j["x"] for j in character["joints"]}
+    return "left" if at["neck"] < at["hip"] else "right"
+
+
+def test_turn_flips_head_side_and_drops_corrections(client, png_bytes):
+    """S-05 「얼굴이 반대쪽이에요」 — 머리 쪽만 반대로 다시 분석하고, 고친 관절 기록은 지운다 (11/4)."""
+    cid = _upload(client, png_bytes, "quadruped").json()["character_id"]
+    url = f"/api/v1/characters/{cid}"
+    before = client.get(url).json()
+    joints = before["joints"]
+    joints[0]["x"] += 5
+    assert client.patch(f"{url}/joints", json={"joints": joints}).json()["joints_corrected"] is True
+
+    res = client.post(f"{url}/turn")
+    assert res.status_code == 202, res.text
+    after = client.get(url).json()
+    assert after["status"] == "succeeded" and after["joints_corrected"] is False
+    assert _side(after) != _side(before)
+    assert client.post(f"{url}/turn").status_code == 202          # 다시 누르면 원래 쪽으로
+    assert _side(client.get(url).json()) == _side(before)
+
+
+def test_turn_is_only_for_side_view_forms(client, png_bytes):
+    cid = _upload(client, png_bytes).json()["character_id"]
+    res = client.post(f"/api/v1/characters/{cid}/turn")
+    assert res.status_code == 422 and res.json()["error"]["code"] == "FORM_HAS_NO_SIDE"
+
+
 def _book(*actions: str) -> Book:
     return Book("t", [Page(i + 1, "place", a, [(NARRATOR, "글", "")]) for i, a in enumerate(actions)], [1])
 

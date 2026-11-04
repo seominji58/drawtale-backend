@@ -532,6 +532,17 @@ S-10 을 한 번 할 때마다 하나를 보낸다. 맞혀서 S-11 로 가면 `c
 - `hero.fit`: 장면(S-09)에 세울 때 키(`height`) / 몸길이(`width`) 기준. 4족형은 옆으로 길다
 - 4족형 이야기: 쪽 동작은 걷기 · 뛰기만 렌더하고 나머지는 가만히(멈춘 그림). 미리 만든 카드 이야기(사람 주인공 글)는 쓰지 않고 대본 AI 가 새로 쓴다
 
+### 2-14. `POST /api/v1/characters/{character_id}/turn` — 얼굴 방향 바꾸기 (2026-11-04)
+
+S-05 「얼굴이 반대쪽이에요」. 옆모습 형태(형태 정의 `hero.facing == "auto"`, 지금은 4족형)만.
+AI 는 머리 쪽을 몸이 굵은 쪽으로 추측해 꼬리가 굵은 그림(악어)에서 틀린다 — 그러면 목 · 어깨 · 꼬리 · 앞뒤 다리가 모두 뒤집힌다.
+같은 그림을 **머리 쪽만 지금과 반대로** 다시 분석한다 (지금 머리 쪽 = 목이 엉덩이보다 왼쪽이면 왼쪽).
+
+- 응답 `202` — 2-1 과 같은 `{ character_id, job_id, status }`. 화면은 2-1 처럼 Job 을 기다린 뒤 2-3 으로 다시 읽는다
+- 고친 관절 기록은 지운다 (`joints_corrected` → false). 미리보기 · 쪽 동작은 다시 만든다 (`preview_status` → `rendering`)
+- 에러: `409 CHARACTER_NOT_READY` (분석 전) · `422 FORM_HAS_NO_SIDE` (2족형) · `409 ORIGINAL_DELETED` (원본을 지운 뒤)
+- AI 에는 3장 analyze 에 `facing=left|right` 를 함께 보낸다 (없으면 AI 가 추측)
+
 ### 2-12. `/api/v1/me/voice` — 보호자 목소리 (나레이터 대신, 2026-11-02)
 
 보호자 모드. **로그인 필요** (`Authorization: Bearer`, 없으면 `401 UNAUTHORIZED`). 아이 목소리는 받지 않는다.

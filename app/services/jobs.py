@@ -87,7 +87,15 @@ def current_joints(character: Character) -> list[dict] | None:
     return character.ai_joints
 
 
-def run_analyze_job(job_id: uuid.UUID) -> None:
+def facing_of(joints: list[dict] | None) -> str | None:
+    """옆모습 형태의 머리 쪽 — 목이 엉덩이보다 왼쪽이면 left (AI 렌더도 같은 기준으로 동작을 뒤집는다)."""
+    at = {j["name"]: j for j in joints or []}
+    if "neck" not in at or "hip" not in at:
+        return None
+    return "left" if at["neck"]["x"] < at["hip"]["x"] else "right"
+
+
+def run_analyze_job(job_id: uuid.UUID, facing: str | None = None) -> None:
     with db_session.SessionLocal() as db:
         job = db.get(Job, job_id)
         character = db.get(Character, job.character_id)
@@ -99,7 +107,7 @@ def run_analyze_job(job_id: uuid.UUID) -> None:
         try:
             ai = get_ai_client((character.image_width, character.image_height))
             path = character.upload_blob_path
-            res = ai.analyze(storage.read(path), filename=path.rsplit("/", 1)[-1], form=character.form)
+            res = ai.analyze(storage.read(path), filename=path.rsplit("/", 1)[-1], form=character.form, facing=facing)
             character.bbox = res.bbox.model_dump()
             character.ai_joints = [j.model_dump(mode="json") for j in res.joints]
             character.detection_confidence = res.confidence

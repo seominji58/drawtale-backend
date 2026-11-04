@@ -32,6 +32,7 @@ from app.schemas.common import AIJoint, BBox, ErrorResponse, JobStatus, JobType,
 from app.services import forms
 from app.services.jobs import (
     current_joints,
+    facing_of,
     run_analyze_job,
     run_preview_job,
     start_previews,
@@ -222,6 +223,53 @@ def update_joints(
         get_storage().delete(path)
     db.refresh(character)
     return to_response(character)
+
+
+@router.post(
+    "/{character_id}/turn",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=CharacterCreateResponse,
+    responses={**_ERRORS, 409: {"model": ErrorResponse}},
+    summary="얼굴 방향 바꾸기 — 옆모습 형태(4족형)를 머리 쪽만 반대로 다시 분석",
+)
+def turn_character(
+    character_id: uuid.UUID,
+    request: Request,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> CharacterCreateResponse:
+    """S-05 「얼굴이 반대쪽이에요」 (11/4). AI 는 머리 쪽을 굵은 쪽으로 추측해 꼬리가 굵은 그림(악어)에서 틀린다 —
+    그러면 목 · 어깨 · 꼬리 · 앞뒤 다리가 모두 뒤집혀 손으로 고치기 어렵다. 같은 그림을 머리 쪽만 정해 다시 분석한다.
+    고친 관절 기록은 지운다(뒤집기 전 자리라 맞지 않는다). 미리보기 · 쪽 동작도 다시 만든다. 분석 Job 을 돌려준다."""
+    character = owned_character(db, character_id, user)
+    if character.status != JobStatus.succeeded:
+        raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 바꿀 수 있어요.", 409)
+    if (forms.get(character.form).get("hero") or {}).get("facing") != "auto":
+        raise AppError("FORM_HAS_NO_SIDE", "옆모습 친구만 얼굴 방향을 바꿀 수 있어요.", 422, {"form": character.form})
+    if character.original_deleted_at is not None or not character.upload_blob_path:
+        raise AppError("ORIGINAL_DELETED", "그림이 지워져서 다시 볼 수 없어요. 새로 올려 주세요.", 409)
+    rate_limit.check("analyze", request, user)
+    facing = "right" if facing_of(current_joints(character)) == "left" else "left"
+
+    busy_key = f"analyze:{user.id}" if user else None
+    rate_limit.claim(busy_key)
+    try:
+        db.query(JointCorrection).filter(JointCorrection.character_id == character.id).delete()
+        old_files = start_previews(character)
+        character.preview_status = None          # 분석이 끝나면 run_analyze_job 이 다시 연다
+        character.status = JobStatus.pending
+        job = Job(type=JobType.analyze, character_id=character.id)
+        db.add(job)
+        db.commit()
+    except Exception:
+        db.rollback()
+        rate_limit.release(busy_key)
+        raise
+    for path in old_files:
+        get_storage().delete(path)
+    background.add_task(rate_limit.run_then_release, busy_key, run_analyze_job, job.id, facing)
+    return CharacterCreateResponse(character_id=character.id, job_id=job.id, status=job.status)
 
 
 @router.delete(

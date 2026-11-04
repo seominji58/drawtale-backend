@@ -142,10 +142,11 @@ class HttpAIClient:
         res.raise_for_status()
         return list(res.json()["forms"])
 
-    def analyze(self, image: bytes, filename: str, form: str = "biped") -> AnalyzeResult:
-        # 2족형은 form 을 보내지 않는다 — 형태를 모르는 예전 AI 서버도 그대로 돈다
-        res = self._post("/internal/v1/analyze", files={"file": (filename, image)},
-                         **({"data": {"form": form}} if form != "biped" else {}))
+    def analyze(self, image: bytes, filename: str, form: str = "biped", facing: str | None = None) -> AnalyzeResult:
+        # 2족형은 form 을 보내지 않는다 — 형태를 모르는 예전 AI 서버도 그대로 돈다.
+        # facing: 옆모습 형태의 머리 쪽 (left · right). 없으면 AI 가 추측한다 (「얼굴이 반대쪽이에요」, 11/4)
+        data = {**({"form": form} if form != "biped" else {}), **({"facing": facing} if facing else {})}
+        res = self._post("/internal/v1/analyze", files={"file": (filename, image)}, **({"data": data} if data else {}))
         try:
             raw = AIAnalyzeRaw.model_validate(self._json(res))
         except ValidationError as e:
@@ -273,11 +274,13 @@ class MockAIClient:
         """2족형 사본 + 시험용 4족형 (관절 이름 · 동작만 AI 와 같게)."""
         return [forms._BIPED, _MOCK_QUADRUPED_FORM]
 
-    def analyze(self, image: bytes, filename: str, form: str = "biped") -> AnalyzeResult:
+    def analyze(self, image: bytes, filename: str, form: str = "biped", facing: str | None = None) -> AnalyzeResult:
         start = time.perf_counter()
         w, h = self.image_size or (512, 512)
         bbox = BBox(x=w * 0.2, y=h * 0.1, width=w * 0.6, height=h * 0.8)
         pose = _MOCK_QUADRUPED_POSE if form == "quadruped" else _MOCK_POSE
+        if form == "quadruped" and facing == "left":     # 목 4족형은 머리가 오른쪽 — 왼쪽이면 좌우로
+            pose = {n: (1 - x, y) for n, (x, y) in pose.items()}
         joints = [
             AIJoint(
                 name=name,
