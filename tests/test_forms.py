@@ -87,6 +87,21 @@ def test_turn_is_only_for_side_view_forms(client, png_bytes):
     assert res.status_code == 422 and res.json()["error"]["code"] == "FORM_HAS_NO_SIDE"
 
 
+def test_story_tells_hero_form_and_facing(client, png_bytes):
+    """이야기 응답에 주인공 형태 · 머리 쪽 — 화면이 세션 관절 없이도(새로고침 · 책장) 옆모습 주인공을 뒤집는다 (11/4)."""
+    from tests.test_activity import _STORY
+
+    def story_of(form):
+        cid = _upload(client, png_bytes, form).json()["character_id"]
+        sid = client.post("/api/v1/stories", json={"character_id": cid, **_STORY}).json()["story_id"]
+        return cid, client.get(f"/api/v1/stories/{sid}").json()
+
+    cid, quad = story_of("quadruped")
+    assert quad["hero_form"] == "quadruped" and quad["hero_facing"] == _side(client.get(f"/api/v1/characters/{cid}").json())
+    _, human = story_of(None)
+    assert human["hero_form"] == "biped" and human["hero_facing"] is None
+
+
 def _book(*actions: str) -> Book:
     return Book("t", [Page(i + 1, "place", a, [(NARRATOR, "글", "")]) for i, a in enumerate(actions)], [1])
 

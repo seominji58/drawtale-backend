@@ -221,6 +221,11 @@ class StoryResponse(BaseModel):
         default=None,
         description="정지 그림 안 주인공 손 위치 {l, r: [x, y]} 0~1 (l 은 그림 왼쪽). 대본에서 주인공이 든 소품을 손에. 예전 이야기는 없음",
     )
+    hero_form: str | None = Field(default=None, description="주인공 형태 (GET /api/v1/forms 의 id). 캐릭터가 없으면 없음")
+    hero_facing: str | None = Field(
+        default=None,
+        description="옆모습 형태(4족형)의 머리 쪽 left · right — 렌더는 머리 쪽으로 걷는다. 반대쪽으로 옮겨 갈 때 화면이 좌우로 뒤집는다. 2족형은 없음",
+    )
     sprite_url: str | None = Field(
         default=None, description="짧은 이야기: animation_url 동작의 바탕이 투명한 프레임 묶음 (긴 이야기는 쪽마다 book.pages)"
     )

@@ -11,7 +11,7 @@ from app.core.authz import owned_character, owned_story
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.session import get_db
-from app.models import GuardianVoice, Job, Story, StoryActivity, User
+from app.models import Character, GuardianVoice, Job, Story, StoryActivity, User
 from app.models.mixins import utcnow
 from app.schemas.common import ErrorResponse, JobStatus, JobType
 from app.schemas.story import (
@@ -22,8 +22,9 @@ from app.schemas.story import (
     StoryCreateResponse,
     StoryResponse,
 )
+from app.services import forms
 from app.services.jobs import (
-    MOTION_ACTION, cancel_job, motion_for, read_sprite_meta, read_still_hands, run_story_job, sprite_path_for,
+    MOTION_ACTION, cancel_job, current_joints, facing_of, motion_for, read_sprite_meta, read_still_hands, run_story_job, sprite_path_for,
 )
 from app.services.storage import get_storage
 
@@ -152,6 +153,12 @@ def get_story(
     # 짧은 이야기의 동작 영상 옆 투명 프레임 묶음 (2026-11-03) — 화면이 긴 이야기처럼 장면 층으로 쌓는다
     clip = story.animation_blob_path if (story.animation_blob_path or "").endswith(".mp4") else None
     meta = read_sprite_meta(storage, clip) if clip and not story.book else None
+    # 주인공 형태 · 머리 쪽 (11/4 운영 — 화면은 머리 쪽을 세션 관절로만 알아서, 새로고침 · 책장에서 연 이야기는
+    # 옆모습 주인공이 머리 반대쪽으로 갈 때 뒤집지 못해 뒷걸음질했다)
+    character = db.get(Character, story.character_id)
+    hero_form = character.form if character else None
+    side = hero_form is not None and (forms.get(hero_form).get("hero") or {}).get("facing") == "auto"
+    hero_facing = facing_of(current_joints(character)) if side else None
     return StoryResponse(
         id=story.id,
         character_id=story.character_id,
@@ -171,6 +178,8 @@ def get_story(
         animation_url=storage.url(story.animation_blob_path),
         still_url=storage.url(story.still_blob_path),
         still_hands=read_still_hands(storage, story.still_blob_path),
+        hero_form=hero_form,
+        hero_facing=hero_facing,
         sprite_url=storage.url(sprite_path_for(clip)) if meta else None,
         sprite_frames=meta["frames"] if meta else None,
         sprite_box=meta["box"] if meta else None,
