@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core import rate_limit
 from app.core.auth import current_user
@@ -178,7 +178,7 @@ def story_response(story: Story) -> StoryResponse:
     meta = read_sprite_meta(storage, clip) if clip and not story.book else None
     # 주인공 형태 · 머리 쪽 (11/4 운영 — 화면은 머리 쪽을 세션 관절로만 알아서, 새로고침 · 책장에서 연 이야기는
     # 옆모습 주인공이 머리 반대쪽으로 갈 때 뒤집지 못해 뒷걸음질했다)
-    character = db.get(Character, story.character_id)
+    character = object_session(story).get(Character, story.character_id)
     hero_form = character.form if character else None
     side = hero_form is not None and (forms.get(hero_form).get("hero") or {}).get("facing") == "auto"
     hero_facing = facing_of(current_joints(character)) if side else None
