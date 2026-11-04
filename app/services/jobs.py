@@ -764,6 +764,11 @@ def wait_for_motion_clips(
 
 
 def trim_still(png: bytes) -> bytes:
+    """잘라 낸 정지 그림을 그림이 있는 자리만 남긴다 (trim_still_box 의 그림만)."""
+    return trim_still_box(png)[0]
+
+
+def trim_still_box(png: bytes) -> tuple[bytes, tuple[int, int, int, int] | None]:
     """잘라 낸 정지 그림(원본 사진 크기 · 둘레는 투명)을 그림이 있는 자리만 남긴다 (2026-11-03).
 
     화면 장면 층은 정지 그림 전체를 주인공 키에 맞추고, 움직이는 쪽은 프레임 묶음의 그림 자리만 재서 맞춘다.
@@ -777,15 +782,47 @@ def trim_still(png: bytes) -> bytes:
         im.load()
         box = im.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox() if im.mode in ("RGBA", "LA") else None
         if not box or box == (0, 0, im.width, im.height):
-            return png
+            return png, (0, 0, im.width, im.height)
         pad = max(2, round(max(box[2] - box[0], box[3] - box[1]) * 0.01))
         box = (max(0, box[0] - pad), max(0, box[1] - pad), min(im.width, box[2] + pad), min(im.height, box[3] + pad))
         out = io.BytesIO()
         im.crop(box).save(out, format="PNG", optimize=True)
-        return out.getvalue()
+        return out.getvalue(), box
     except Exception:  # noqa: BLE001
         log.exception("정지 그림 다듬기 실패, 그대로 둡니다")
-        return png
+        return png, None
+
+
+def still_meta_path(still_path: str) -> str:
+    """정지 그림 옆 정보 (`still.png` → `still.json`) — 그림 안 주인공 손 위치"""
+    return still_path.rsplit(".", 1)[0] + ".json"
+
+
+def still_hands(joints: list[dict] | None, box: tuple[int, int, int, int] | None) -> dict | None:
+    """손 관절 두 개를 정지 그림 안 비율로 { "l": [x, y], "r": [x, y] } — l 은 그림 왼쪽 손 (2026-11-04).
+
+    화면 장면 층이 대본의 「나는 양동이를 꼭 안고」처럼 주인공이 든 소품을 손에 쥐여 준다.
+    아이 그림마다 손 자리가 달라 AI 가 찾은 손 관절을 쓴다 (화면은 다른 주소 그림의 픽셀을 못 읽는다)"""
+    if not joints or not box or box[2] <= box[0] or box[3] <= box[1]:
+        return None
+    pts = [j for j in joints if j.get("name") in ("right_hand", "left_hand")]
+    if len(pts) != 2:
+        return None
+    w, h = box[2] - box[0], box[3] - box[1]
+    frac = sorted(([min(1.0, max(0.0, (float(j["x"]) - box[0]) / w)), min(1.0, max(0.0, (float(j["y"]) - box[1]) / h))] for j in pts),
+                  key=lambda v: v[0])
+    return {"l": [round(v, 3) for v in frac[0]], "r": [round(v, 3) for v in frac[1]]}
+
+
+def read_still_hands(storage, still_path: str | None) -> dict | None:
+    """저장해 둔 손 위치. 없거나 깨졌으면 None (예전 이야기 — 화면은 손에 쥐여 주지 않는다)"""
+    if not still_path:
+        return None
+    try:
+        hands = json.loads(storage.read(still_meta_path(still_path)))["hands"]
+        return {k: [float(v) for v in hands[k]][:2] for k in ("l", "r")}
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def copy_still(story: Story, character: Character, storage) -> str | None:
@@ -797,7 +834,12 @@ def copy_still(story: Story, character: Character, storage) -> str | None:
     if not character.cutout_blob_path:
         return None
     try:
-        return storage.save(f"results/{story.id}/still.png", trim_still(storage.read(character.cutout_blob_path)))
+        png, box = trim_still_box(storage.read(character.cutout_blob_path))
+        path = storage.save(f"results/{story.id}/still.png", png)
+        hands = still_hands(current_joints(character), box)
+        if hands:
+            storage.save(still_meta_path(path), json.dumps({"hands": hands}).encode())
+        return path
     except Exception:
         log.exception("story %s: 정지 그림 복사 실패", story.id)
         return None

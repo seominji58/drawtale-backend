@@ -217,6 +217,10 @@ class StoryResponse(BaseModel):
         default=None,
         description="배경을 잘라 낸 캐릭터 정지 그림. 영상이 없는 쪽 · 완료 화면 · 표지",
     )
+    still_hands: dict[str, list[float]] | None = Field(
+        default=None,
+        description="정지 그림 안 주인공 손 위치 {l, r: [x, y]} 0~1 (l 은 그림 왼쪽). 대본에서 주인공이 든 소품을 손에. 예전 이야기는 없음",
+    )
     sprite_url: str | None = Field(
         default=None, description="짧은 이야기: animation_url 동작의 바탕이 투명한 프레임 묶음 (긴 이야기는 쪽마다 book.pages)"
     )

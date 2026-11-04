@@ -23,7 +23,7 @@ from app.schemas.story import (
     StoryResponse,
 )
 from app.services.jobs import (
-    MOTION_ACTION, cancel_job, motion_for, read_sprite_meta, run_story_job, sprite_path_for,
+    MOTION_ACTION, cancel_job, motion_for, read_sprite_meta, read_still_hands, run_story_job, sprite_path_for,
 )
 from app.services.storage import get_storage
 
@@ -170,6 +170,7 @@ def get_story(
         audio_url=storage.url(story.audio_blob_path),
         animation_url=storage.url(story.animation_blob_path),
         still_url=storage.url(story.still_blob_path),
+        still_hands=read_still_hands(storage, story.still_blob_path),
         sprite_url=storage.url(sprite_path_for(clip)) if meta else None,
         sprite_frames=meta["frames"] if meta else None,
         sprite_box=meta["box"] if meta else None,
