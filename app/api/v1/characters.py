@@ -252,7 +252,9 @@ def turn_character(
     rate_limit.check("analyze", request, user)
     facing = "right" if facing_of(current_joints(character)) == "left" else "left"
 
-    busy_key = f"analyze:{user.id}" if user else None
+    # 업로드의 분석 자리(analyze:)는 미리보기 렌더가 끝나야 비어서, S-05 에서 점이 뒤집힌 걸 보자마자 누르면 막혔다 —
+    # 바꾸기는 자기 자리만 잡는다(연타 막기). 그사이 끝나는 옛 미리보기는 관절 고치기 때처럼 나중 것이 덮고, 쪽 동작은 버린다
+    busy_key = f"turn:{user.id}" if user else None
     rate_limit.claim(busy_key)
     try:
         db.query(JointCorrection).filter(JointCorrection.character_id == character.id).delete()
