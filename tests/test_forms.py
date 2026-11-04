@@ -64,7 +64,8 @@ def _book(*actions: str) -> Book:
 
 def test_quadruped_pages_keep_only_what_it_can_do():
     book = fit_form(_book("walk", "march", "run", "hooray", "wave", "idle", "breathe"), "quadruped")
-    assert [p.action for p in book.pages] == ["walk", "walk", "run", "idle", "idle", "idle", "idle"]
+    # 만세 → 점프 (page_motions.FALLBACK), 숨쉬기는 4족형도 된다 (11/4). 손 흔들기는 대신할 것이 없어 가만히
+    assert [p.action for p in book.pages] == ["walk", "walk", "run", "jump", "idle", "idle", "breathe"]
     same = fit_form(_book("hooray", "wave"), "biped")
     assert [p.action for p in same.pages] == ["hooray", "wave"]
 
@@ -72,6 +73,6 @@ def test_quadruped_pages_keep_only_what_it_can_do():
 def test_book_prompt_tells_the_hero_form():
     prompt = book_prompt(8, False, None, hero_form=forms.get("quadruped"))
     assert "[주인공 모습]" in prompt and "네 발로 걷는 친구" in prompt
-    assert "walk, run, idle" in prompt
+    assert "walk, run, jump, breathe, shiver, idle" in prompt    # AI 동작 이름(jumping_gentle)이 아니라 쪽 동작 이름
     assert prompt.rstrip().endswith("}") or "JSON 으로만 답한다." in prompt
     assert "[주인공 모습]" not in book_prompt(8, False, None)

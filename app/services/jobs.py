@@ -655,7 +655,7 @@ def fit_form(book: Book, form: str) -> Book:
     """그 형태가 렌더할 수 없는 쪽 동작을 바꾼다 (pt_docs 19 6장). 2족형은 그대로.
 
     대신 동작(page_motions.FALLBACK)을 따라가 렌더할 수 있는 동작이 나오면 그것(행진 → 걷기), 끝까지 없으면
-    가만히(멈춘 그림) — 4족형은 지금 걷기 · 뛰기만 된다. 숨쉬기 · 점프는 AI 시험 뒤에 형태 정의에 더한다."""
+    가만히(멈춘 그림) — 4족형은 걷기 · 뛰기 · 점프 · 숨쉬기 · 몸 떨기 (AI 형태 정의 motions, 11/4)."""
     allowed = forms.render_motions(form)
     if allowed is None:
         return book

@@ -381,10 +381,15 @@ FORM_RULE = """[주인공 모습]
 
 
 def form_words(form: dict) -> dict[str, str]:
+    from app.services.jobs import PAGE_MOTIONS   # jobs 가 이 파일을 불러 쓴다 — 순환을 피한다
+
+    # 형태 정의의 동작은 AI 동작 이름(jumping_gentle)이다 — 쪽 동작 이름(jump)으로 바꿔 알린다
+    motions = set(form.get("motions") or {})
+    actions = [a for a in ACTIONS if PAGE_MOTIONS.get(a) in motions]
     return {
         "kid_label": form.get("kid_label", "다른 모습 친구"),
         "examples": " · ".join(form.get("examples") or []) or "동물",
-        "actions": ", ".join([*(form.get("motions") or {}), "idle"]),
+        "actions": ", ".join([*actions, "idle"]),
     }
 
 
