@@ -149,6 +149,21 @@ def test_body_rules_in_both_prompts():
         assert "냄새 맡기" in text and "두 발로 서기" in text and "동물 이름으로 부르지 않고" in text
 
 
+def test_facing_and_body_rules_for_chain_and_finned():
+    """사슬형 · 지느러미형 — 머리 쪽은 머리 · 꼬리 끝으로, 이야기 행동은 그 몸으로 (11/5)."""
+    from app.services.book import body_rules, short_form_rule
+    from app.services.jobs import facing_of
+
+    line = [{"name": "head", "x": 10, "y": 5}, {"name": "b1", "x": 50, "y": 5}, {"name": "tail", "x": 90, "y": 5}]
+    assert facing_of(line) == "left"
+    assert facing_of([{**j, "x": 100 - j["x"]} for j in line]) == "right"
+    assert facing_of([{"name": "neck", "x": 80, "y": 0}, {"name": "hip", "x": 20, "y": 0}]) == "right"
+    snake = body_rules({"id": "chain"})
+    assert "기어가기" in snake and "걷기 · 뛰기 · 점프" in snake and "동물 이름으로 부르지 않고" in snake
+    fish = short_form_rule({"id": "finned", "kid_label": "헤엄치는 친구", "examples": ["물고기"]})
+    assert "헤엄치기" in fish and "둥실 떠서" in fish and "빠르게 헤엄쳐 갔어요" in fish
+
+
 def _book(*actions: str) -> Book:
     return Book("t", [Page(i + 1, "place", a, [(NARRATOR, "글", "")]) for i, a in enumerate(actions)], [1])
 
