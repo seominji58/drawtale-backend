@@ -416,7 +416,12 @@ def motion_for(action: str) -> str:
     return DEFAULT_MOTION
 
 
-def write_story_text(story: Story) -> str:
+def _hero_form(form: str | None) -> dict | None:
+    """사람(2족형)이 아닌 주인공의 형태 정의 — 이야기 지시문에 모습을 알린다. 사람이면 None."""
+    return None if (form or forms.DEFAULT) == forms.DEFAULT else forms.get(form)
+
+
+def write_story_text(story: Story, form: str | None = None) -> str:
     """OpenAI로 이야기를 만든다. 키가 없거나 실패하면 템플릿 문장을 쓴다."""
 
     parts = (story.place, story.problem, story.action, story.result)
@@ -427,7 +432,7 @@ def write_story_text(story: Story) -> str:
         return fallback_text(*parts)
 
     try:
-        return writer.write(*parts)
+        return writer.write(*parts, hero_form=_hero_form(form))
     except StoryBlocked:
         raise
     except Exception:
@@ -436,7 +441,7 @@ def write_story_text(story: Story) -> str:
         return fallback_text(*parts)
 
 
-def write_story_script(story: Story) -> Script | None:
+def write_story_script(story: Story, form: str | None = None) -> Script | None:
     """캐릭터 목소리 판의 대본. 만들 수 없으면 None — 나레이션 판으로 대신한다."""
 
     writer = get_story_writer()
@@ -445,7 +450,8 @@ def write_story_script(story: Story) -> Script | None:
 
     try:
         script = writer.write_script(
-            story.place, story.problem, story.action, story.result, story.protagonist_name
+            story.place, story.problem, story.action, story.result, story.protagonist_name,
+            hero_form=_hero_form(form),
         )
     except StoryBlocked:
         raise
@@ -963,9 +969,9 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 story.animation_blob_path = render_story(story, character, storage)
             else:
                 script = (
-                    write_story_script(story) if story.voice_mode == VoiceMode.characters else None
+                    write_story_script(story, character.form) if story.voice_mode == VoiceMode.characters else None
                 )
-                story.text = script_text(script) if script else write_story_text(story)
+                story.text = script_text(script) if script else write_story_text(story, character.form)
                 story.audio_blob_path = make_audio(story, storage, script)
                 _stop_if_cancelled(job_id)
                 wait_for_motion_clips(db, character, {motion_for(story.action)}, stop)

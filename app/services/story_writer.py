@@ -14,7 +14,7 @@ import anthropic
 from openai import OpenAI, OpenAIError
 
 from app.core.config import get_settings
-from app.services.book import Book, book_problems, book_prompt, book_user_message, parse_book
+from app.services.book import Book, book_problems, book_prompt, book_user_message, parse_book, short_form_rule
 from app.services.voices import EMOTION_TAGS, NARRATOR, PROTAGONIST, VOICE_TYPES
 
 log = logging.getLogger(__name__)
@@ -304,13 +304,14 @@ class StoryWriter:
             log.warning("입력이 moderation에 걸림: %s", categories)
             raise StoryBlocked(", ".join(categories))
 
-    def write(self, place: str, problem: str, action: str, result: str) -> str:
+    def write(self, place: str, problem: str, action: str, result: str, hero_form: dict | None = None) -> str:
         user_input = USER_TEMPLATE.format(
             place=place, problem=problem, action=action, result=result
         )
         self.check_input(user_input)
 
-        text = self.short_completion(SYSTEM_PROMPT, user_input, json_mode=False, openai_tokens=300)
+        system = SYSTEM_PROMPT + short_form_rule(hero_form)   # 사람이 아닌 주인공 (4족형 …)
+        text = self.short_completion(system, user_input, json_mode=False, openai_tokens=300)
         # Claude 는 문장마다 줄을 바꿔 올 때가 있다. 화면 · 음성은 한 줄 글을 받는다
         text = " ".join(text.split())
 
@@ -322,7 +323,8 @@ class StoryWriter:
         return text
 
     def write_script(
-        self, place: str, problem: str, action: str, result: str, name: str | None = None
+        self, place: str, problem: str, action: str, result: str, name: str | None = None,
+        hero_form: dict | None = None,
     ) -> Script:
         """캐릭터 목소리 판. 화자 · 감정을 붙인 네 문장 대본과 인물 목록을 만든다.
 
@@ -340,7 +342,8 @@ class StoryWriter:
         # 맞을 때까지 세 번까지 쓴다. 끝내 안 맞으면 마지막 것을 쓴다
         script = None
         for _ in range(3):
-            raw = self.short_completion(script_prompt(name), user_input, json_mode=True, openai_tokens=600)
+            raw = self.short_completion(script_prompt(name) + short_form_rule(hero_form), user_input,
+                                        json_mode=True, openai_tokens=600)
             try:
                 script = parse_script(raw, name)
             except ValueError as e:

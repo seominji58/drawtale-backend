@@ -102,6 +102,33 @@ def test_story_tells_hero_form_and_facing(client, png_bytes):
     assert human["hero_form"] == "biped" and human["hero_facing"] is None
 
 
+def test_short_story_tells_the_hero_form():
+    """짧은 이야기(나레이션 · 캐릭터 목소리 판)도 사람이 아닌 주인공의 모습을 알린다 (11/5 — 고양이가 손을 흔들었다)."""
+    from app.services.story_writer import SYSTEM_PROMPT, StoryWriter
+
+    seen: list[str] = []
+    writer = object.__new__(StoryWriter)
+    writer.check_input = lambda text: None
+
+    def fake(system, user, json_mode, openai_tokens):
+        seen.append(system)
+        if json_mode:
+            return ('{"protagonist": "토토", "lines": [{"speaker": "narrator", "text": "토토는 숲에 갔어요."},'
+                    ' {"speaker": "토토", "text": "\\"안녕.\\" 하고 말했어요."}]}')
+        return "나는 숲에 갔어요."
+    writer.short_completion = fake
+
+    writer.write("숲", "길을 잃었어요", "손을 흔들었어요", "웃었어요", hero_form=forms.get("quadruped"))
+    assert seen[-1].startswith(SYSTEM_PROMPT) and "네 발로 걷는 친구" in seen[-1] and "꼬리를 흔들며" in seen[-1]
+    writer.write("숲", "길을 잃었어요", "손을 흔들었어요", "웃었어요")
+    assert seen[-1] == SYSTEM_PROMPT                               # 사람 그림은 그대로
+    try:
+        writer.write_script("숲", "길을 잃었어요", "손을 흔들었어요", "웃었어요", "토토", hero_form=forms.get("quadruped"))
+    except ValueError:
+        pass                                                       # 대본 모양은 이 시험의 관심이 아니다
+    assert "네 발로 걷는 친구" in seen[-1]
+
+
 def _book(*actions: str) -> Book:
     return Book("t", [Page(i + 1, "place", a, [(NARRATOR, "글", "")]) for i, a in enumerate(actions)], [1])
 

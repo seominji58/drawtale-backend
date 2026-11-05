@@ -380,6 +380,22 @@ FORM_RULE = """[주인공 모습]
 """
 
 
+# 짧은 이야기(네 문장)판 — 쪽 동작이 없고, 아이가 고른 행동 카드의 뜻은 바꾸지 않는다 (SYSTEM_PROMPT 「카드의 뜻」).
+# 손으로 하는 카드는 뜻을 살려 몸으로 바꿔 쓴다 (11/5 — 전에는 짧은 이야기에 형태를 알리지 않아 고양이가 손을 흔들었다)
+SHORT_FORM_RULE = """
+- 아이가 그린 주인공은 {kid_label}다 (예: {examples}). 사람이 아니다.
+- 주인공이 손으로 하는 행동(손 흔들기 · 손잡기 · 박수 · 손으로 집기)을 쓰지 않는다. 몸 · 발 · 꼬리 · 코로 한다.
+  고른 카드가 손을 쓰는 행동이면 뜻은 그대로 살려 몸으로 바꿔 쓴다 (손을 흔들었어요 → 꼬리를 흔들며 인사했어요)."""
+
+
+def short_form_rule(form: dict | None) -> str:
+    """짧은 이야기 지시문 끝에 붙일 주인공 모습 규칙. 사람(형태 없음)이면 빈 글."""
+    if not form:
+        return ""
+    w = form_words(form)
+    return SHORT_FORM_RULE.format(kid_label=w["kid_label"], examples=w["examples"])
+
+
 def form_words(form: dict) -> dict[str, str]:
     from app.services.jobs import PAGE_MOTIONS   # jobs 가 이 파일을 불러 쓴다 — 순환을 피한다
 
