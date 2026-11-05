@@ -119,7 +119,7 @@ def test_short_story_tells_the_hero_form():
     writer.short_completion = fake
 
     writer.write("숲", "길을 잃었어요", "손을 흔들었어요", "웃었어요", hero_form=forms.get("quadruped"))
-    assert seen[-1].startswith(SYSTEM_PROMPT) and "네 발로 걷는 친구" in seen[-1] and "꼬리를 흔들며" in seen[-1]
+    assert seen[-1].startswith(SYSTEM_PROMPT) and "네 발로 걷는 친구" in seen[-1] and "몸을 흔들며" in seen[-1] and "꼬리 이야기는 쓰지 않는다" in seen[-1]
     writer.write("숲", "길을 잃었어요", "손을 흔들었어요", "웃었어요")
     assert seen[-1] == SYSTEM_PROMPT                               # 사람 그림은 그대로
     try:
