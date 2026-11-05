@@ -161,9 +161,22 @@ def test_facing_and_body_rules_for_chain_and_finned():
     snake = body_rules({"id": "chain"})
     assert "기어가기" in snake and "걷기 · 뛰기 · 점프" in snake and "동물 이름으로 부르지 않고" in snake
     # 화면에 움직임이 없는 몸 움직임(몸 말기)은 「쓰지 않는다」 쪽에, 소리 · 표정은 자유 (11/5)
-    assert snake.index("몸 말기") > snake.index("그 밖의 몸 움직임") and "표정 · 마음은 자유롭게" in snake
+    # 형태별 대표 동작은 쓸 수 있는 쪽에 · 쪽 동작 칸과 함께, 움직임 없는 것은 「쓰지 않는다」 쪽 (11/5)
+    assert snake.index("몸을 돌돌 말았다 펴기(이 쪽 action 은 shiver)") < snake.index("그 밖의 몸 움직임") < snake.index("몸으로 감싸기")
+    assert "표정 · 마음은 자유롭게" in snake and "빙글 돌기(이 쪽 action 은 hooray)" in body_rules({"id": "finned"})
     fish = short_form_rule({"id": "finned", "kid_label": "헤엄치는 친구", "examples": ["물고기"]})
     assert "헤엄치기" in fish and "둥실 떠서" in fish and "빠르게 헤엄쳐 갔어요" in fish
+
+
+def test_signature_moves_follow_page_words():
+    """글에 킁킁 · 돌돌 · 빙글이 나오면 그 동작 칸으로 (형태별 대표 동작, 11/5)."""
+    from app.services.page_motions import liven
+
+    book = _book("idle", "idle", "idle")
+    book.pages[0].lines = [(NARRATOR, "나는 킁킁 냄새를 맡았어요.", "")]
+    book.pages[1].lines = [(NARRATOR, "나는 몸을 돌돌 말았어요.", "")]
+    book.pages[2].lines = [(NARRATOR, "나는 빙글 돌았어요.", "")]
+    assert [p.action for p in liven(book).pages] == ["search", "shiver", "hooray"]
 
 
 def _book(*actions: str) -> Book:
@@ -181,6 +194,6 @@ def test_quadruped_pages_keep_only_what_it_can_do():
 def test_book_prompt_tells_the_hero_form():
     prompt = book_prompt(8, False, None, hero_form=forms.get("quadruped"))
     assert "[주인공 모습]" in prompt and "네 발로 걷는 친구" in prompt
-    assert "walk, run, jump, breathe, shiver, idle" in prompt    # AI 동작 이름(jumping_gentle)이 아니라 쪽 동작 이름
+    assert "walk, run, jump, breathe, shiver, search, idle" in prompt    # AI 동작 이름(jumping_gentle)이 아니라 쪽 동작 이름
     assert prompt.rstrip().endswith("}") or "JSON 으로만 답한다." in prompt
     assert "[주인공 모습]" not in book_prompt(8, False, None)
