@@ -160,6 +160,8 @@ def test_facing_and_body_rules_for_chain_and_finned():
     assert facing_of([{"name": "neck", "x": 80, "y": 0}, {"name": "hip", "x": 20, "y": 0}]) == "right"
     snake = body_rules({"id": "chain"})
     assert "기어가기" in snake and "걷기 · 뛰기 · 점프" in snake and "동물 이름으로 부르지 않고" in snake
+    # 화면에 움직임이 없는 몸 움직임(몸 말기)은 「쓰지 않는다」 쪽에, 소리 · 표정은 자유 (11/5)
+    assert snake.index("몸 말기") > snake.index("그 밖의 몸 움직임") and "표정 · 마음은 자유롭게" in snake
     fish = short_form_rule({"id": "finned", "kid_label": "헤엄치는 친구", "examples": ["물고기"]})
     assert "헤엄치기" in fish and "둥실 떠서" in fish and "빠르게 헤엄쳐 갔어요" in fish
 
