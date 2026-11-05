@@ -179,6 +179,17 @@ def test_signature_moves_follow_page_words():
     assert [p.action for p in liven(book).pages] == ["search", "shiver", "hooray"]
 
 
+def test_winged_facing_and_body_rules():
+    """날개형 — 머리 쪽은 머리 · 몸통으로, 이야기 행동은 날기 (11/5)."""
+    from app.services.book import body_rules
+    from app.services.jobs import facing_of
+
+    bird = [{"name": "body", "x": 50, "y": 50}, {"name": "head", "x": 20, "y": 30}, {"name": "wing1_root", "x": 55, "y": 40}]
+    assert facing_of(bird) == "left" and facing_of([{**j, "x": 100 - j["x"]} for j in bird]) == "right"
+    rules = body_rules({"id": "winged"})
+    assert "날개를 퍼덕이며 날아가기" in rules and rules.index("걷기") > rules.index("그 밖의 몸 움직임")
+
+
 def _book(*actions: str) -> Book:
     return Book("t", [Page(i + 1, "place", a, [(NARRATOR, "글", "")]) for i, a in enumerate(actions)], [1])
 

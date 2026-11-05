@@ -89,9 +89,9 @@ def current_joints(character: Character) -> list[dict] | None:
 
 def facing_of(joints: list[dict] | None) -> str | None:
     """옆모습 형태의 머리 쪽 — 머리가 몸 뒤쪽보다 왼쪽이면 left. 4족형은 목 · 엉덩이 (AI 렌더도 같은 기준으로
-    동작을 뒤집는다), 사슬형 · 지느러미형은 머리 · 꼬리 끝."""
+    동작을 뒤집는다), 사슬형 · 지느러미형은 머리 · 꼬리 끝, 날개형은 머리 · 몸통."""
     at = {j["name"]: j for j in joints or []}
-    for front, back in (("neck", "hip"), ("head", "tail")):
+    for front, back in (("neck", "hip"), ("head", "tail"), ("head", "body")):     # 4족 · 사슬 · 지느러미 · 날개형
         if front in at and back in at:
             return "left" if at[front]["x"] < at[back]["x"] else "right"
     return None
