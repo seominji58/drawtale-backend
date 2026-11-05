@@ -190,6 +190,14 @@ def test_winged_facing_and_body_rules():
     assert "날개를 퍼덕이며 날아가기" in rules and rules.index("걷기") > rules.index("그 밖의 몸 움직임")
 
 
+def test_radial_body_rules():
+    """촉수형(문어) — 이야기 행동은 흐느적 · 둥실 (11/5)."""
+    from app.services.book import body_rules
+
+    rules = body_rules({"id": "radial"})
+    assert "흐느적거리며 둥실 떠가기" in rules and rules.index("걷기") > rules.index("그 밖의 몸 움직임")
+
+
 def _book(*actions: str) -> Book:
     return Book("t", [Page(i + 1, "place", a, [(NARRATOR, "글", "")]) for i, a in enumerate(actions)], [1])
 
