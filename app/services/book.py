@@ -366,7 +366,7 @@ def book_prompt(
         prompt = head + EXTRA_RULES.lstrip("\n") + "\nJSON 으로만 답한다." + tail
     if hero_form:
         head, tail = prompt.split("JSON 으로만 답한다.", 1)
-        prompt = head + FORM_RULE.format(**form_words(hero_form)) + "\nJSON 으로만 답한다." + tail
+        prompt = head + FORM_RULE.format(**form_words(hero_form), body_rules=BODY_RULES) + "\nJSON 으로만 답한다." + tail
     return prompt
 
 
@@ -374,17 +374,23 @@ def book_prompt(
 # 쪽 동작은 그 형태가 렌더할 수 있는 것과 가만히(idle)만 — 나머지는 jobs.fit_form 이 다시 바꾼다
 FORM_RULE = """[주인공 모습]
 - 아이가 그린 주인공은 {kid_label}다 (예: {examples}). 사람이 아니다.
-- 주인공이 손으로 하는 행동(손 흔들기 · 손잡기 · 박수 · 손으로 집기)을 쓰지 않는다.
-  대신 몸 · 발 · 꼬리 · 코로 한다 (뛰어가기, 냄새 맡기, 꼬리 흔들기, 코로 밀기).
+{body_rules}
 - action 은 {actions} 중에서만 고른다.
 """
+
+# 사람이 아닌 주인공이 하는 행동 · 부르는 말 (긴 이야기 · 짧은 이야기 공통, 11/5 사용자 「4족 동물이 할 만한 행동만」).
+# 무슨 동물인지는 화면이 묻지 않는다 — 대신 4족형은 이름을 꼭 짓는다. 동물을 지어내면 악어 그림이 강아지가 됐다
+BODY_RULES = """- 주인공은 그 몸으로 할 수 있는 행동만 한다: 걷기 · 뛰기 · 껑충 뛰기 · 냄새 맡기 · 꼬리 흔들기 · 엎드리기 · 웅크리기 ·
+  몸 털기 · 코로 밀기 · 소리 내어 부르기. 손으로 하는 행동(손 흔들기 · 손잡기 · 박수 · 손으로 집기)과
+  두 발로 서기 · 물건 들고 가기 · 옷 입기 · 글 쓰기는 쓰지 않는다.
+- 무슨 동물인지 지어내지 않는다 — 강아지 · 고양이처럼 동물 이름으로 부르지 않고, 주인공 이름이나 「나」로 쓴다."""
 
 
 # 짧은 이야기(네 문장)판 — 쪽 동작이 없고, 아이가 고른 행동 카드의 뜻은 바꾸지 않는다 (SYSTEM_PROMPT 「카드의 뜻」).
 # 손으로 하는 카드는 뜻을 살려 몸으로 바꿔 쓴다 (11/5 — 전에는 짧은 이야기에 형태를 알리지 않아 고양이가 손을 흔들었다)
 SHORT_FORM_RULE = """
 - 아이가 그린 주인공은 {kid_label}다 (예: {examples}). 사람이 아니다.
-- 주인공이 손으로 하는 행동(손 흔들기 · 손잡기 · 박수 · 손으로 집기)을 쓰지 않는다. 몸 · 발 · 꼬리 · 코로 한다.
+{body_rules}
   고른 카드가 손을 쓰는 행동이면 뜻은 그대로 살려 몸으로 바꿔 쓴다 (손을 흔들었어요 → 꼬리를 흔들며 인사했어요)."""
 
 
@@ -393,7 +399,7 @@ def short_form_rule(form: dict | None) -> str:
     if not form:
         return ""
     w = form_words(form)
-    return SHORT_FORM_RULE.format(kid_label=w["kid_label"], examples=w["examples"])
+    return SHORT_FORM_RULE.format(kid_label=w["kid_label"], examples=w["examples"], body_rules=BODY_RULES)
 
 
 def form_words(form: dict) -> dict[str, str]:

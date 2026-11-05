@@ -93,7 +93,7 @@ def test_story_tells_hero_form_and_facing(client, png_bytes):
 
     def story_of(form):
         cid = _upload(client, png_bytes, form).json()["character_id"]
-        sid = client.post("/api/v1/stories", json={"character_id": cid, **_STORY}).json()["story_id"]
+        sid = client.post("/api/v1/stories", json={"character_id": cid, **_STORY, "protagonist_name": "뭉치"}).json()["story_id"]
         return cid, client.get(f"/api/v1/stories/{sid}").json()
 
     cid, quad = story_of("quadruped")
@@ -127,6 +127,26 @@ def test_short_story_tells_the_hero_form():
     except ValueError:
         pass                                                       # 대본 모양은 이 시험의 관심이 아니다
     assert "네 발로 걷는 친구" in seen[-1]
+
+
+def test_quadruped_story_needs_a_name(client, png_bytes):
+    """4족형은 이름이 있어야 이야기를 만든다 — 무슨 동물인지 묻지 않고 이름으로 부른다 (11/5 사용자)."""
+    from tests.test_activity import _STORY
+
+    cid = _upload(client, png_bytes, "quadruped").json()["character_id"]
+    for name in (None, "  "):
+        res = client.post("/api/v1/stories", json={"character_id": cid, **_STORY, "protagonist_name": name})
+        assert res.status_code == 422 and res.json()["error"]["code"] == "NAME_REQUIRED"
+    assert client.post("/api/v1/stories", json={"character_id": cid, **_STORY, "protagonist_name": "뭉치"}).status_code == 202
+    human = _upload(client, png_bytes).json()["character_id"]                  # 사람 그림은 지금처럼 이름 없이도
+    assert client.post("/api/v1/stories", json={"character_id": human, **_STORY}).status_code == 202
+
+
+def test_body_rules_in_both_prompts():
+    from app.services.book import short_form_rule
+
+    for text in (book_prompt(8, False, None, hero_form=forms.get("quadruped")), short_form_rule(forms.get("quadruped"))):
+        assert "냄새 맡기" in text and "두 발로 서기" in text and "동물 이름으로 부르지 않고" in text
 
 
 def _book(*actions: str) -> Book:

@@ -70,6 +70,10 @@ def create_story(
     character = owned_character(db, body.character_id, user)
     if character.status != JobStatus.succeeded:
         raise AppError("CHARACTER_NOT_READY", "그림 분석이 끝난 뒤에 이야기를 만들 수 있어요.", 409)
+    # 사람이 아닌 주인공은 이름이 있어야 한다 (11/5 사용자) — 이야기 AI 가 그림이 무슨 동물인지 몰라
+    # 동물을 지어내지 않고 이름으로 부른다
+    if character.form != forms.DEFAULT and not (body.protagonist_name or "").strip():
+        raise AppError("NAME_REQUIRED", "친구 이름을 지어 주세요.", 422, {"form": character.form})
 
     rate_limit.check("story", request, user)
     _daily_limits(db, request, user)
