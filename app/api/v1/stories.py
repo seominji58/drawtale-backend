@@ -25,7 +25,7 @@ from app.schemas.story import (
 )
 from app.services import forms
 from app.services.jobs import (
-    MOTION_ACTION, cancel_job, current_joints, facing_of, read_sprite_meta, read_still_hands, run_story_job, short_motion, sprite_path_for,
+    MOTION_ACTION, cancel_job, current_joints, facing_of, read_sprite_meta, read_still_body, read_still_hands, run_story_job, short_motion, sprite_path_for,
 )
 from app.services.storage import get_storage
 
@@ -207,6 +207,7 @@ def story_response(story: Story) -> StoryResponse:
         animation_url=storage.url(story.animation_blob_path),
         still_url=storage.url(story.still_blob_path),
         still_hands=read_still_hands(storage, story.still_blob_path),
+        still_body=read_still_body(storage, story.still_blob_path),
         hero_form=hero_form,
         hero_facing=hero_facing,
         sprite_url=storage.url(sprite_path_for(clip)) if meta else None,

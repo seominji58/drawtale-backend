@@ -224,6 +224,10 @@ class StoryResponse(BaseModel):
         default=None,
         description="정지 그림 안 주인공 손 위치 {l, r: [x, y]} 0~1 (l 은 그림 왼쪽). 대본에서 주인공이 든 소품을 손에. 예전 이야기는 없음",
     )
+    still_body: dict[str, list[float]] | None = Field(
+        default=None,
+        description="4족형 정지 그림 안 입 · 머리 꼭대기 · 등 자리 {mouth, head, back: [x, y]} 0~1 (그림 기준, 뒤집기 전). 사람 · 예전 이야기는 없음",
+    )
     hero_form: str | None = Field(default=None, description="주인공 형태 (GET /api/v1/forms 의 id). 캐릭터가 없으면 없음")
     hero_facing: str | None = Field(
         default=None,

@@ -882,13 +882,83 @@ def still_hands(joints: list[dict] | None, box: tuple[int, int, int, int] | None
     return {"l": [round(v, 3) for v in frac[0]], "r": [round(v, 3) for v in frac[1]]}
 
 
+def still_body(png: bytes, joints: list[dict] | None, box: tuple[int, int, int, int] | None) -> dict | None:
+    """4족형 정지 그림 안 입 · 머리 꼭대기 · 등 자리를 그림 비율로 { "mouth": [x, y], "head": [x, y], "back": [x, y] } (11/6).
+
+    장면 층이 「공을 입에 물고」 · 「모자를 쓰고」 · 「바구니를 등에 얹고」 소품을 놓는다. 전에는 그림 상자 비율로 어림해
+    머리가 큰 · 목이 긴 그림에서 어긋났다. 4족형 관절에는 머리가 없어(목은 어깨 바로 앞, 몸통 안) 그림에서 잰다 —
+    목보다 머리 쪽으로, 앞다리 위쪽보다 높이 있는 그림 = 머리. 머리 쪽으로 가장 멀리 나간 끝 = 입, 맨 위 = 머리 꼭대기,
+    엉덩이와 어깨 사이 몸 윗선 = 등. 못 재면 None (화면은 예전처럼 어림)"""
+    if not joints or not box or box[2] <= box[0] or box[3] <= box[1]:
+        return None
+    j = {p.get("name"): (float(p["x"]) - box[0], float(p["y"]) - box[1]) for p in joints}
+    if not all(k in j for k in ("hip", "torso", "neck")):
+        return None
+    try:
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(png))
+        im.load()
+        if im.mode not in ("RGBA", "LA"):
+            return None
+        a = im.getchannel("A").point(lambda v: 255 if v > 24 else 0)
+        w, h = a.size
+        right = j["neck"][0] > j["hip"][0]                     # 머리가 그림 오른쪽
+        tops = [j[k][1] for k in ("right_hip_f", "left_hip_f") if k in j]
+        legs_top = int(min(tops) if tops else j["torso"][1])  # 앞다리 위쪽 — 이보다 위가 머리
+        nx = int(j["neck"][0])
+        hx0, hx1 = (nx, w) if right else (0, max(1, nx))
+        head = a.crop((hx0, 0, hx1, max(1, legs_top))).getbbox()
+        if not head:
+            return None
+        x0, y0, x1, y1 = head[0] + hx0, head[1], head[2] + hx0, head[3]
+        if (x1 - x0) * (y1 - y0) < w * h * 0.004:              # 머리라기엔 너무 작다
+            return None
+        # 입 = 머리 쪽으로 가장 멀리 나간 줄들(그림 폭 6% 이내) 가운데 가장 아래 줄의 끝 (주둥이 · 코끝).
+        # 머리 상자의 아래쪽으로 잡으면 목이 긴 그림(기린)은 목 옆 허공에, 가장 앞선 한 점으로 잡으면 귀가 늘어진
+        # 강아지는 귀 끝에 찍혔다 (11/6 시험 그림 — 강아지 · 공룡 · 기린 · 머리 큰 고양이)
+        px = a.load()
+        front: dict[int, int] = {}
+        for y in range(y0, y1):
+            xs = range(x1 - 1, x0 - 1, -1) if right else range(x0, x1)
+            for x in xs:
+                if px[x, y]:
+                    front[y] = x
+                    break
+        if not front:
+            return None
+        best = max(front.values()) if right else min(front.values())
+        near = [y for y, x in front.items() if abs(x - best) <= w * 0.06]
+        my = max(near)
+        mx = front[my]
+        bx = int((j["hip"][0] + j["torso"][0]) / 2)
+        col = a.crop((max(0, bx - 2), 0, min(w, bx + 3), h)).getbbox()
+        by = col[1] if col else j["hip"][1]
+        fr = lambda x, y: [round(min(1.0, max(0.0, x / w)), 3), round(min(1.0, max(0.0, y / h)), 3)]  # noqa: E731
+        return {"mouth": fr(mx, my), "head": fr((x0 + x1) / 2, y0), "back": fr(bx, by)}
+    except Exception:  # noqa: BLE001
+        log.exception("4족형 머리 · 등 자리 재기 실패")
+        return None
+
+
+def read_still_body(storage, still_path: str | None) -> dict | None:
+    """저장해 둔 4족형 입 · 머리 · 등 자리. 없으면 None (사람 · 예전 이야기 — 화면이 어림한다)"""
+    if not still_path:
+        return None
+    try:
+        body = json.loads(storage.read(still_meta_path(still_path))).get("body")
+        return {k: [float(v) for v in body[k]][:2] for k in ("mouth", "head", "back")} if body else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def read_still_hands(storage, still_path: str | None) -> dict | None:
     """저장해 둔 손 위치. 없거나 깨졌으면 None (예전 이야기 — 화면은 손에 쥐여 주지 않는다)"""
     if not still_path:
         return None
     try:
         hands = json.loads(storage.read(still_meta_path(still_path)))["hands"]
-        return {k: [float(v) for v in hands[k]][:2] for k in ("l", "r")}
+        return {k: [float(v) for v in hands[k]][:2] for k in ("l", "r")} if hands else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -905,8 +975,9 @@ def copy_still(story: Story, character: Character, storage) -> str | None:
         png, box = trim_still_box(storage.read(character.cutout_blob_path))
         path = storage.save(f"results/{story.id}/still.png", png)
         hands = still_hands(current_joints(character), box)
-        if hands:
-            storage.save(still_meta_path(path), json.dumps({"hands": hands}).encode())
+        body = still_body(png, current_joints(character), box) if character.form == "quadruped" else None
+        if hands or body:
+            storage.save(still_meta_path(path), json.dumps({"hands": hands, "body": body}).encode())
         return path
     except Exception:
         log.exception("story %s: 정지 그림 복사 실패", story.id)
