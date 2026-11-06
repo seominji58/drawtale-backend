@@ -573,6 +573,23 @@ S-11 「다 했어요」의 「책 제목」 · S-12 책장 · S-13 제목 바�
 오류: 동의가 하나라도 빠지면 `400 CONSENT_REQUIRED`(ElevenLabs 로 아무것도 보내지 않음), 형식 · 크기 `400 INVALID_AUDIO`, ElevenLabs 설정 없음 `503 VOICE_UNAVAILABLE`, ElevenLabs 실패 `502 VOICE_FAILED`.
 요금제마다 만들 수 있는 목소리 개수가 정해져 있다 — 가족마다 하나씩 쓰므로 배포 전에 확인한다.
 
+### 2-16. `/api/v1/me/guardian-pin` · `/api/v1/me/onboarded` — 보호자 비밀번호 · 보호자 소개 카드 (2026-11-06, pt_docs 20 3장)
+
+설정은 누구나 톱니로 연다. 아이가 바꾸면 안 되는 것(보호자 모드 · 사진 올리기 · 목소리 · 계정 · 제목 고치기 · 지우기 …)은 설정의 「보호자 칸」에 두고
+이 비밀번호로 연다. 아이 화면의 잠긴 보호자 기능(🔒)도 같은 비밀번호를 묻는다. **로그인 필요** (없으면 `401`).
+
+| | 요청 | 응답 |
+|---|---|---|
+| `PUT /me/guardian-pin` | `{"pin": "2580"}` — 숫자 4자리. 이미 있으면 `"current_pin"` 도 | `204`. 처음이면 그대로 만든다. 이미 있으면 `current_pin` 이 맞아야 바꾼다 — **잊었으면 다시 로그인한 뒤 10분 안**(그 토큰의 발급 시각)에는 `current_pin` 없이 새로 정한다 |
+| `POST /me/guardian-pin/check` | `{"pin": "2580"}` | `200 {"ok": true}` |
+| `POST /me/onboarded` | — | `204`. 보호자 소개 카드를 봤다(`users.onboarded_at`) — 다른 기기에서 다시 띄우지 않는다. 여러 번 불러도 된다 |
+
+- 2-8 `GET /auth/me` 응답에 `guardian_pin_set` · `onboarded` (bool)
+- 오류: 4자리 숫자가 아니면 `422`. 비밀번호가 없는데 확인 `409 PIN_NOT_SET`. 틀리면 `403 PIN_WRONG` + `detail.tries_left`(남은 횟수).
+  **연달아 다섯 번 틀리면 5분 동안** `429 PIN_LOCKED` + `detail.retry_after` · `Retry-After` 초 (그동안은 맞는 비밀번호도 받지 않는다). 맞으면 센 횟수를 지운다.
+  이미 있는데 `current_pin` 도 없고 로그인한 지 10분이 지났으면 `403 PIN_REQUIRED`
+- 비밀번호는 PBKDF2-SHA256(계정마다 소금) 해시로만 둔다. DB: `users.guardian_pin_hash` · `guardian_pin_failures` · `guardian_pin_locked_until` · `onboarded_at` (마이그레이션 `b7c8d9e0f1a2`)
+
 ---
 
 ## 3. Internal API (Backend → AI, A1 담당)

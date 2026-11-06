@@ -143,7 +143,12 @@ def social_login(
     summary="현재 로그인한 계정 확인",
 )
 def me(user: User = Depends(current_user)) -> MeResponse:
-    return MeResponse(user_id=user.id, providers=[a.provider for a in user.social_accounts])
+    return MeResponse(
+        user_id=user.id,
+        providers=[a.provider for a in user.social_accounts],
+        guardian_pin_set=user.guardian_pin_hash is not None,
+        onboarded=user.onboarded_at is not None,
+    )
 
 
 @router.delete(

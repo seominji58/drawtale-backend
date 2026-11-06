@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -23,6 +23,16 @@ class User(IdMixin, TimestampMixin, Base):
     # 어느 판의 약관 · 개인정보 처리방침에 동의했는지 (프론트 src/legal LEGAL_VERSION, 2026-11-03).
     # 그 전에 가입한 계정은 비어 있다
     consent_version: Mapped[str | None] = mapped_column(String(40), default=None)
+    # 보호자 비밀번호(숫자 4자리)의 해시 — 설정 「보호자 칸」 · 아이 화면의 잠긴 보호자 기능을 연다
+    # (pt_docs 20 3장, 2026-11-06). 비밀번호 자체는 남기지 않는다 (app/services/guardian_pin.py)
+    guardian_pin_hash: Mapped[str | None] = mapped_column(String(160), default=None)
+    # 연달아 틀린 횟수와, 다섯 번 틀려 잠시 막힌 때까지
+    guardian_pin_failures: Mapped[int] = mapped_column(Integer, default=0)
+    guardian_pin_locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # 보호자 소개 카드를 본 때 — 다른 기기에서 다시 뜨지 않게
+    onboarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     social_accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="user")
 

@@ -44,3 +44,6 @@ class AuthResponse(BaseModel):
 class MeResponse(BaseModel):
     user_id: uuid.UUID
     providers: list[str]
+    # 보호자 비밀번호를 만들었는지 · 보호자 소개 카드를 봤는지 (pt_docs 20 3장, 2026-11-06)
+    guardian_pin_set: bool = False
+    onboarded: bool = False

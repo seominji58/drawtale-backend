@@ -4,7 +4,7 @@ import hmac
 import json
 import secrets
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import Depends, Header
 from sqlalchemy import select
@@ -63,22 +63,40 @@ def read_signup_ticket(ticket: str) -> tuple[str, str] | None:
     return payload["p"], payload["m"]
 
 
-def _user_for(authorization: str | None, db: Session) -> User | None:
-    """Authorization 헤더에서 사용자를 찾는다. 토큰이 없거나 틀리면 None."""
+def aware(at: datetime) -> datetime:
+    """SQLite (tests) returns naive datetimes; compare in UTC either way"""
+
+    return at if at.tzinfo is not None else at.replace(tzinfo=utcnow().tzinfo)
+
+
+def _token_for(authorization: str | None, db: Session) -> AuthToken | None:
+    """Authorization 헤더의 살아 있는 토큰 행. 없거나 틀리거나 지났으면 None."""
 
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         return None
     row = db.scalar(select(AuthToken).where(AuthToken.token_hash == hash_token(token)))
+    if row is None or aware(row.expires_at) <= utcnow():
+        return None
+    return row
+
+
+def _user_for(authorization: str | None, db: Session) -> User | None:
+    """Authorization 헤더에서 사용자를 찾는다. 토큰이 없거나 틀리면 None."""
+
+    row = _token_for(authorization, db)
+    return None if row is None else db.get(User, row.user_id)
+
+
+def current_token(
+    authorization: str | None = Header(default=None), db: Session = Depends(get_db)
+) -> AuthToken:
+    """로그인한 토큰 행 — 언제 로그인했는지(created_at)가 필요한 곳 (보호자 비밀번호 새로 정하기)"""
+
+    row = _token_for(authorization, db)
     if row is None:
-        return None
-    # SQLite (tests) returns naive datetimes; compare in UTC either way
-    expires_at = row.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=utcnow().tzinfo)
-    if expires_at <= utcnow():
-        return None
-    return db.get(User, row.user_id)
+        raise AppError("UNAUTHORIZED", "로그인이 필요해요.", 401)
+    return row
 
 
 def current_user(
