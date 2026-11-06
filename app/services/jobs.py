@@ -419,16 +419,18 @@ def motion_for(action: str) -> str:
 
 
 def short_motion(action: str, form: str | None) -> str:
-    """짧은 이야기 행동 쪽의 렌더 동작. 그 형태가 못 하는 동작이면 걷기 (pt_docs 19 6장).
+    """짧은 이야기 행동 쪽의 렌더 동작. 그 형태가 못 하는 동작이면 형태별 대신 동작, 그래도 없으면 걷기.
 
     렌더(render_story)와 응답의 action_motion 이 같은 것을 쓴다 — 전에는 응답이 형태를 몰라 사람 아닌 주인공
-    짧은 이야기가 모두 손 흔들기(wave)로 나갔고, 화면은 걷기 영상을 제자리 동작으로 보였다 (11/6 이야기 15편 점검)."""
+    짧은 이야기가 모두 손 흔들기(wave)로 나갔고, 화면은 걷기 영상을 제자리 동작으로 보였다 (11/6 이야기 15편 점검).
+    「가만히 기다렸어요」(손 흔들기 칸)는 4족형이면 숨쉬기 — 걷기보다 뜻이 맞다 (pt_docs 19 6장 표, 11/6)."""
 
     motion = motion_for(action)
     allowed = forms.render_motions(form)
-    if allowed is not None and motion not in allowed:
-        motion = "walk"
-    return motion
+    if allowed is None or motion in allowed:
+        return motion
+    a = form_action(MOTION_ACTION.get(motion), form, allowed)
+    return PAGE_MOTIONS.get(a) or "walk"
 
 
 def _hero_form(form: str | None) -> dict | None:
@@ -680,17 +682,30 @@ PAGE_MOTIONS: dict[str, str | None] = {
 def fit_form(book: Book, form: str) -> Book:
     """그 형태가 렌더할 수 없는 쪽 동작을 바꾼다 (pt_docs 19 6장). 2족형은 그대로.
 
-    대신 동작(page_motions.FALLBACK)을 따라가 렌더할 수 있는 동작이 나오면 그것(행진 → 걷기), 끝까지 없으면
-    가만히(멈춘 그림) — 4족형은 걷기 · 뛰기 · 점프 · 숨쉬기 · 몸 떨기 (AI 형태 정의 motions, 11/4)."""
+    대신 동작을 따라가 렌더할 수 있는 동작이 나오면 그것, 끝까지 없으면 가만히(멈춘 그림). 형태 정의의
+    `fallback`(뜻으로 고른 형태별 대신 동작)을 먼저, 없으면 page_motions.FALLBACK(사람 기준)을 따른다 —
+    사람 기준만 따르면 물고기 헤엄 · 새 날기 · 뱀 기쁨이 멈춘 그림이 됐다 (pt_docs 20 1-2 b, 11/6)."""
     allowed = forms.render_motions(form)
     if allowed is None:
         return book
     for p in book.pages:
-        a: str | None = p.action
-        while a and PAGE_MOTIONS.get(a) not in allowed:
-            a = FALLBACK.get(a)
-        p.action = a or "idle"
+        p.action = form_action(p.action, form, allowed)
     return book
+
+
+def form_action(action: str | None, form: str | None, allowed: set[str] | None = None) -> str:
+    """쪽 동작 하나를 그 형태가 렌더할 수 있는 쪽 동작으로. 끝까지 없으면 idle."""
+    if allowed is None:
+        allowed = forms.render_motions(form)
+        if allowed is None:
+            return action or "idle"
+    own = forms.fallback(form)
+    seen: set[str] = set()
+    a = action
+    while a and PAGE_MOTIONS.get(a) not in allowed and a not in seen:
+        seen.add(a)
+        a = own.get(a) or FALLBACK.get(a)
+    return a if a and PAGE_MOTIONS.get(a) in allowed else "idle"
 
 
 # 쪽 음성을 동시에 몇 개까지 만드나. ElevenLabs 요금제마다 동시 요청 한도가 있다

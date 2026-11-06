@@ -74,6 +74,16 @@ def render_motions(form_id: str | None) -> set[str] | None:
     return set(get(form_id).get("motions") or {})
 
 
+def fallback(form_id: str | None) -> dict[str, str]:
+    """그 형태의 대신 동작 — 쪽 동작 이름 → 쪽 동작 이름 (형태 정의 `fallback`, pt_docs 19 6장).
+
+    렌더할 수 없는 쪽 동작을 뜻으로 바꾼다(기쁨 → 그 형태의 기쁨, 헤엄 · 날기 → 걷기, 팔 쓰기 → 숨쉬기).
+    없는 것은 page_motions.FALLBACK(사람 기준)을 따른다. 2족형 · 표가 없는 형태는 빈 표."""
+    if (form_id or DEFAULT) == DEFAULT:
+        return {}
+    return dict(get(form_id).get("fallback") or {})
+
+
 def public(form: dict) -> dict:
     """화면에 내주는 칸만 — 대응표 · 동작 파일 경로 · 카메라 같은 AI 내부 값은 뺀다."""
     keys = ("id", "label", "group", "kid_label", "examples", "view", "joints", "guide", "hero", "ready")

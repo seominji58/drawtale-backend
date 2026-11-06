@@ -204,8 +204,8 @@ def _book(*actions: str) -> Book:
 
 def test_quadruped_pages_keep_only_what_it_can_do():
     book = fit_form(_book("walk", "march", "run", "hooray", "wave", "idle", "breathe"), "quadruped")
-    # 만세 → 점프 (page_motions.FALLBACK), 숨쉬기는 4족형도 된다 (11/4). 손 흔들기는 대신할 것이 없어 가만히
-    assert [p.action for p in book.pages] == ["walk", "walk", "run", "jump", "idle", "idle", "breathe"]
+    # 만세 → 점프, 손 흔들기(팔 쓰기) → 숨쉬기 (형태 정의 fallback, pt_docs 19 6장 표). 가만히는 그대로
+    assert [p.action for p in book.pages] == ["walk", "walk", "run", "jump", "breathe", "idle", "breathe"]
     same = fit_form(_book("hooray", "wave"), "biped")
     assert [p.action for p in same.pages] == ["hooray", "wave"]
 
@@ -221,12 +221,13 @@ def test_book_prompt_tells_the_hero_form():
 @pytest.mark.parametrize(
     "action,form,motion",
     [
-        # 4족형이 할 수 있는 것은 그대로, 못 하는 것(손 흔들기 · 춤)은 걷기 (pt_docs 19 6장)
+        # 4족형이 할 수 있는 것은 그대로, 못 하는 것은 형태별 대신 동작 (pt_docs 19 6장 표):
+        # 손 흔들기 칸(기다렸어요 · 불렀어요) → 숨쉬기, 춤 → 점프
         ("툭툭 털고 달려갔어요", "quadruped", "run"),
         ("천천히 다시 걸었어요", "quadruped", "walk"),
-        ("가만히 기다렸어요", "quadruped", "walk"),
-        ("어른을 불렀어요", "quadruped", "walk"),
-        ("신나게 춤을 춰요", "quadruped", "walk"),
+        ("가만히 기다렸어요", "quadruped", "breathe"),
+        ("어른을 불렀어요", "quadruped", "breathe"),
+        ("신나게 춤을 춰요", "quadruped", "jumping_gentle"),
         # 사람은 행동 문구 그대로
         ("가만히 기다렸어요", "biped", "wave_hello_gentle"),
         ("가만히 기다렸어요", None, "wave_hello_gentle"),
@@ -235,6 +236,64 @@ def test_book_prompt_tells_the_hero_form():
 )
 def test_short_story_motion_follows_the_form(action, form, motion):
     # 짧은 이야기 렌더와 응답 action_motion 이 같은 것을 쓴다 (11/6 이야기 15편 점검 — 전에는 응답이 모두 wave)
+    from app.services.jobs import short_motion
+
+    assert short_motion(action, form) == motion
+
+
+# AI 형태 정의(drawtale-ai forms/*.json)의 동작 · 대신 동작과 같다 (11/6). 목 AI 는 4족형만 알아 나머지는 여기서 준다
+_ARM = {"wave": "breathe", "point": "breathe", "kick": "breathe"}
+_FLOATY = {**_ARM, "fly": "walk", "swim": "walk", "jump": "hooray", "dance": "hooray", "shiver": "breathe",
+           "search": "breathe", "march": "walk"}
+_MORE_FORMS = {
+    "chain": {"id": "chain", "motions": {m: "x" for m in ("walk", "run", "breathe", "search", "shiver")},
+              "fallback": {**_ARM, "point": "search", "fly": "breathe", "swim": "walk", "jump": "run",
+                           "hooray": "run", "dance": "run", "march": "walk"}},
+    "finned": {"id": "finned", "motions": {m: "x" for m in ("walk", "run", "breathe", "hooray")}, "fallback": _FLOATY},
+    "winged": {"id": "winged", "motions": {m: "x" for m in ("walk", "run", "breathe", "hooray")}, "fallback": _FLOATY},
+    "radial": {"id": "radial", "motions": {m: "x" for m in ("walk", "run", "breathe", "hooray")}, "fallback": _FLOATY},
+    "nofallback": {"id": "nofallback", "motions": {m: "x" for m in ("walk", "breathe")}},
+}
+
+
+@pytest.fixture
+def more_forms(monkeypatch):
+    real = forms.all_forms()
+    monkeypatch.setattr(forms, "all_forms", lambda: {**real, **_MORE_FORMS})
+
+
+@pytest.mark.parametrize(
+    "form,actions,expected",
+    [
+        # 물고기: 헤엄 · 날기는 헤엄(걷기 칸), 기쁨(점프 · 춤 · 만세)은 빙글(만세 칸) — 전에는 헤엄 쪽이 멈춘 그림
+        ("finned", ["swim", "fly", "jump", "dance", "hooray", "shiver", "search", "wave"],
+         ["walk", "walk", "hooray", "hooray", "hooray", "breathe", "breathe", "breathe"]),
+        # 새: 날기는 날아가기(걷기 칸) — 전에는 날기 → 손 흔들기 → 멈춘 그림
+        ("winged", ["fly", "march", "jump", "point", "kick"], ["walk", "walk", "hooray", "breathe", "breathe"]),
+        # 문어: 헤엄 · 날기는 둥실(걷기 칸), 기쁨은 통통(만세 칸)
+        ("radial", ["swim", "fly", "dance", "shiver"], ["walk", "walk", "hooray", "breathe"]),
+        # 뱀: 기쁨은 재빨리 꿈틀(뛰기 칸), 가리키기는 고개 들고 두리번(살피기 칸), 몸 말기 · 두리번은 그대로
+        ("chain", ["jump", "hooray", "dance", "point", "swim", "shiver", "search"],
+         ["run", "run", "run", "search", "walk", "shiver", "search"]),
+        # 형태 정의에 표가 없으면 사람 기준(page_motions.FALLBACK) — 행진 → 걷기, 떨기 → 숨쉬기, 끝까지 없으면 가만히
+        ("nofallback", ["march", "shiver", "wave", "idle"], ["walk", "breathe", "idle", "idle"]),
+    ],
+)
+def test_pages_follow_the_form_fallback(more_forms, form, actions, expected):
+    assert [p.action for p in fit_form(_book(*actions), form).pages] == expected
+
+
+@pytest.mark.parametrize(
+    "action,form,motion",
+    [
+        ("가만히 기다렸어요", "finned", "breathe"),     # 손 흔들기 칸 → 제자리 지느러미 살랑
+        ("신나게 춤을 춰요", "winged", "hooray"),       # 춤 → 높이 날아오르기
+        ("신나게 춤을 춰요", "chain", "run"),           # 춤 → 재빨리 꿈틀
+        ("밝은 곳으로 달려갔어요", "radial", "run"),
+        ("가만히 기다렸어요", "nofallback", "walk"),    # 대신할 것이 없으면 걷기 (멈춘 행동 쪽을 두지 않는다)
+    ],
+)
+def test_short_story_motion_uses_the_form_fallback(more_forms, action, form, motion):
     from app.services.jobs import short_motion
 
     assert short_motion(action, form) == motion

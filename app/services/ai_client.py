@@ -251,6 +251,8 @@ _MOCK_QUADRUPED_FORM: dict = {
     "motions": {"walk": "quadruped/walk.yaml", "run": "quadruped/run.yaml",
                 "jumping_gentle": "quadruped/jumping_gentle.yaml", "breathe": "quadruped/breathe.yaml",
                 "shiver": "quadruped/shiver.yaml", "search": "quadruped/breathe.yaml"},
+    "fallback": {"wave": "breathe", "point": "breathe", "kick": "breathe", "fly": "breathe", "swim": "breathe",
+                 "hooray": "jump", "dance": "jump", "march": "walk"},
     "hero": {"fit": "width", "facing": "auto"},
 }
 
