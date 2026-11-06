@@ -136,7 +136,7 @@ def test_story_keeps_its_own_still_after_original_is_deleted(client, png_bytes, 
 
 
 def test_file_urls_stay_the_same_for_a_while(monkeypatch):
-    # 같은 파일은 10분 단위로 같은 주소 — 브라우저 캐시 · 주소 비교가 초 경계에서 흔들리지 않게 (11/6)
+    # 같은 파일은 10분 단위로 같은 주소, 브라우저 캐시 · 주소 비교가 초 경계에서 흔들리지 않게 (11/6)
     from app.services import storage
 
     base = 1_800_000_000          # 10분 단위 경계

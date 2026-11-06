@@ -75,7 +75,7 @@ def render_motions(form_id: str | None) -> set[str] | None:
 
 
 def fallback(form_id: str | None) -> dict[str, str]:
-    """그 형태의 대신 동작 — 쪽 동작 이름 → 쪽 동작 이름 (형태 정의 `fallback`, pt_docs 19 6장).
+    """그 형태의 대신 동작, 쪽 동작 이름 → 쪽 동작 이름 (형태 정의 `fallback`, pt_docs 19 6장).
 
     렌더할 수 없는 쪽 동작을 뜻으로 바꾼다(기쁨 → 그 형태의 기쁨, 헤엄 · 날기 → 걷기, 팔 쓰기 → 숨쉬기).
     없는 것은 page_motions.FALLBACK(사람 기준)을 따른다. 2족형 · 표가 없는 형태는 빈 표."""

@@ -421,9 +421,9 @@ def motion_for(action: str) -> str:
 def short_motion(action: str, form: str | None) -> str:
     """짧은 이야기 행동 쪽의 렌더 동작. 그 형태가 못 하는 동작이면 형태별 대신 동작, 그래도 없으면 걷기.
 
-    렌더(render_story)와 응답의 action_motion 이 같은 것을 쓴다 — 전에는 응답이 형태를 몰라 사람 아닌 주인공
+    렌더(render_story)와 응답의 action_motion 이 같은 것을 쓴다, 전에는 응답이 형태를 몰라 사람 아닌 주인공
     짧은 이야기가 모두 손 흔들기(wave)로 나갔고, 화면은 걷기 영상을 제자리 동작으로 보였다 (11/6 이야기 15편 점검).
-    「가만히 기다렸어요」(손 흔들기 칸)는 4족형이면 숨쉬기 — 걷기보다 뜻이 맞다 (pt_docs 19 6장 표, 11/6)."""
+    「가만히 기다렸어요」(손 흔들기 칸)는 4족형이면 숨쉬기, 걷기보다 뜻이 맞다 (pt_docs 19 6장 표, 11/6)."""
 
     motion = motion_for(action)
     allowed = forms.render_motions(form)
@@ -654,7 +654,7 @@ def render_story(story: Story, character: Character, storage) -> str | None:
             RenderRequest(
                 request_id=character.ai_request_id,
                 joints=[Joint.model_validate(j) for j in current_joints(character)],
-                motion=motion,   # 전에는 motion_for(...) 그대로 — 사람 아닌 주인공에 그 형태가 못 하는 동작을 보냈다
+                motion=motion,   # 전에는 motion_for(...) 그대로, 사람 아닌 주인공에 그 형태가 못 하는 동작을 보냈다
             ),
         )
     if result and result.content:
@@ -683,7 +683,7 @@ def fit_form(book: Book, form: str) -> Book:
     """그 형태가 렌더할 수 없는 쪽 동작을 바꾼다 (pt_docs 19 6장). 2족형은 그대로.
 
     대신 동작을 따라가 렌더할 수 있는 동작이 나오면 그것, 끝까지 없으면 가만히(멈춘 그림). 형태 정의의
-    `fallback`(뜻으로 고른 형태별 대신 동작)을 먼저, 없으면 page_motions.FALLBACK(사람 기준)을 따른다 —
+    `fallback`(뜻으로 고른 형태별 대신 동작)을 먼저, 없으면 page_motions.FALLBACK(사람 기준)을 따른다, 
     사람 기준만 따르면 물고기 헤엄 · 새 날기 · 뱀 기쁨이 멈춘 그림이 됐다 (pt_docs 20 1-2 b, 11/6)."""
     allowed = forms.render_motions(form)
     if allowed is None:
@@ -886,7 +886,7 @@ def still_body(png: bytes, joints: list[dict] | None, box: tuple[int, int, int, 
     """4족형 정지 그림 안 입 · 머리 꼭대기 · 등 자리를 그림 비율로 { "mouth": [x, y], "head": [x, y], "back": [x, y] } (11/6).
 
     장면 층이 「공을 입에 물고」 · 「모자를 쓰고」 · 「바구니를 등에 얹고」 소품을 놓는다. 전에는 그림 상자 비율로 어림해
-    머리가 큰 · 목이 긴 그림에서 어긋났다. 4족형 관절에는 머리가 없어(목은 어깨 바로 앞, 몸통 안) 그림에서 잰다 —
+    머리가 큰 · 목이 긴 그림에서 어긋났다. 4족형 관절에는 머리가 없어(목은 어깨 바로 앞, 몸통 안) 그림에서 잰다, 
     목보다 머리 쪽으로, 앞다리 위쪽보다 높이 있는 그림 = 머리. 머리 쪽으로 가장 멀리 나간 끝 = 입, 맨 위 = 머리 꼭대기,
     엉덩이와 어깨 사이 몸 윗선 = 등. 못 재면 None (화면은 예전처럼 어림)"""
     if not joints or not box or box[2] <= box[0] or box[3] <= box[1]:
@@ -905,7 +905,7 @@ def still_body(png: bytes, joints: list[dict] | None, box: tuple[int, int, int, 
         w, h = a.size
         right = j["neck"][0] > j["hip"][0]                     # 머리가 그림 오른쪽
         tops = [j[k][1] for k in ("right_hip_f", "left_hip_f") if k in j]
-        legs_top = int(min(tops) if tops else j["torso"][1])  # 앞다리 위쪽 — 이보다 위가 머리
+        legs_top = int(min(tops) if tops else j["torso"][1])  # 앞다리 위쪽, 이보다 위가 머리
         nx = int(j["neck"][0])
         hx0, hx1 = (nx, w) if right else (0, max(1, nx))
         head = a.crop((hx0, 0, hx1, max(1, legs_top))).getbbox()
@@ -916,7 +916,7 @@ def still_body(png: bytes, joints: list[dict] | None, box: tuple[int, int, int, 
             return None
         # 입 = 머리 쪽으로 가장 멀리 나간 줄들(그림 폭 6% 이내) 가운데 가장 아래 줄의 끝 (주둥이 · 코끝).
         # 머리 상자의 아래쪽으로 잡으면 목이 긴 그림(기린)은 목 옆 허공에, 가장 앞선 한 점으로 잡으면 귀가 늘어진
-        # 강아지는 귀 끝에 찍혔다 (11/6 시험 그림 — 강아지 · 공룡 · 기린 · 머리 큰 고양이)
+        # 강아지는 귀 끝에 찍혔다 (11/6 시험 그림, 강아지 · 공룡 · 기린 · 머리 큰 고양이)
         px = a.load()
         front: dict[int, int] = {}
         for y in range(y0, y1):
@@ -942,7 +942,7 @@ def still_body(png: bytes, joints: list[dict] | None, box: tuple[int, int, int, 
 
 
 def read_still_body(storage, still_path: str | None) -> dict | None:
-    """저장해 둔 4족형 입 · 머리 · 등 자리. 없으면 None (사람 · 예전 이야기 — 화면이 어림한다)"""
+    """저장해 둔 4족형 입 · 머리 · 등 자리. 없으면 None (사람 · 예전 이야기, 화면이 어림한다)"""
     if not still_path:
         return None
     try:

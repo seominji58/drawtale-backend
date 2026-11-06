@@ -1,4 +1,4 @@
-"""4족형 정지 그림 안 입 · 머리 꼭대기 · 등 자리 (jobs.still_body, 11/6). 그림은 여기서 그린다 — 강아지 · 기린 · 머리 큰 고양이 모양."""
+"""4족형 정지 그림 안 입 · 머리 꼭대기 · 등 자리 (jobs.still_body, 11/6). 그림은 여기서 그린다, 강아지 · 기린 · 머리 큰 고양이 모양."""
 
 import io
 
@@ -38,7 +38,7 @@ def test_dog_head_on_the_right_with_ears():
         d.rounded_rectangle((200, 300, 600, 470), 40, fill=FILL)
         _legs(d, (230, 300, 500, 560))
         d.ellipse((560, 180, 760, 380), fill=FILL)          # 머리
-        d.ellipse((740, 200, 800, 330), fill=FILL)          # 늘어진 귀 — 주둥이보다 앞
+        d.ellipse((740, 200, 800, 330), fill=FILL)          # 늘어진 귀, 주둥이보다 앞
         d.ellipse((700, 300, 790, 360), fill=FILL)          # 주둥이 (아래)
     body = still_body(_png(draw), _joints(hip=(260, 380), torso=(520, 370), neck=(580, 340),
                                           right_hip_f=(520, 460), left_hip_f=(560, 460)), BOX)
@@ -59,7 +59,7 @@ def test_giraffe_mouth_is_at_the_nose_not_beside_the_neck():
     body = still_body(_png(draw), _joints(hip=(260, 400), torso=(500, 390), neck=(540, 360),
                                           right_hip_f=(460, 460), left_hip_f=(520, 460)), BOX)
     assert body
-    # 입 = 작은 머리의 아래 앞(턱) — 목 옆 허공(가운데 높이)이 아니다
+    # 입 = 작은 머리의 아래 앞(턱): 목 옆 허공(가운데 높이)이 아니다
     assert 50 / 700 < body["mouth"][1] <= 142 / 700 and body["mouth"][0] > 700 / 900
     assert body["head"][1] < 60 / 700
     assert abs(body["back"][1] - 330 / 700) < 0.03

@@ -235,7 +235,7 @@ def test_book_prompt_tells_the_hero_form():
     ],
 )
 def test_short_story_motion_follows_the_form(action, form, motion):
-    # 짧은 이야기 렌더와 응답 action_motion 이 같은 것을 쓴다 (11/6 이야기 15편 점검 — 전에는 응답이 모두 wave)
+    # 짧은 이야기 렌더와 응답 action_motion 이 같은 것을 쓴다 (11/6 이야기 15편 점검, 전에는 응답이 모두 wave)
     from app.services.jobs import short_motion
 
     assert short_motion(action, form) == motion
@@ -265,17 +265,17 @@ def more_forms(monkeypatch):
 @pytest.mark.parametrize(
     "form,actions,expected",
     [
-        # 물고기: 헤엄 · 날기는 헤엄(걷기 칸), 기쁨(점프 · 춤 · 만세)은 빙글(만세 칸) — 전에는 헤엄 쪽이 멈춘 그림
+        # 물고기: 헤엄 · 날기는 헤엄(걷기 칸), 기쁨(점프 · 춤 · 만세)은 빙글(만세 칸): 전에는 헤엄 쪽이 멈춘 그림
         ("finned", ["swim", "fly", "jump", "dance", "hooray", "shiver", "search", "wave"],
          ["walk", "walk", "hooray", "hooray", "hooray", "breathe", "breathe", "breathe"]),
-        # 새: 날기는 날아가기(걷기 칸) — 전에는 날기 → 손 흔들기 → 멈춘 그림
+        # 새: 날기는 날아가기(걷기 칸): 전에는 날기 → 손 흔들기 → 멈춘 그림
         ("winged", ["fly", "march", "jump", "point", "kick"], ["walk", "walk", "hooray", "breathe", "breathe"]),
         # 문어: 헤엄 · 날기는 둥실(걷기 칸), 기쁨은 통통(만세 칸)
         ("radial", ["swim", "fly", "dance", "shiver"], ["walk", "walk", "hooray", "breathe"]),
         # 뱀: 기쁨은 재빨리 꿈틀(뛰기 칸), 가리키기는 고개 들고 두리번(살피기 칸), 몸 말기 · 두리번은 그대로
         ("chain", ["jump", "hooray", "dance", "point", "swim", "shiver", "search"],
          ["run", "run", "run", "search", "walk", "shiver", "search"]),
-        # 형태 정의에 표가 없으면 사람 기준(page_motions.FALLBACK) — 행진 → 걷기, 떨기 → 숨쉬기, 끝까지 없으면 가만히
+        # 형태 정의에 표가 없으면 사람 기준(page_motions.FALLBACK): 행진 → 걷기, 떨기 → 숨쉬기, 끝까지 없으면 가만히
         ("nofallback", ["march", "shiver", "wave", "idle"], ["walk", "breathe", "idle", "idle"]),
     ],
 )
