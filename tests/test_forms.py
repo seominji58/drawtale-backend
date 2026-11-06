@@ -216,3 +216,25 @@ def test_book_prompt_tells_the_hero_form():
     assert "walk, run, jump, breathe, shiver, search, idle" in prompt    # AI 동작 이름(jumping_gentle)이 아니라 쪽 동작 이름
     assert prompt.rstrip().endswith("}") or "JSON 으로만 답한다." in prompt
     assert "[주인공 모습]" not in book_prompt(8, False, None)
+
+
+@pytest.mark.parametrize(
+    "action,form,motion",
+    [
+        # 4족형이 할 수 있는 것은 그대로, 못 하는 것(손 흔들기 · 춤)은 걷기 (pt_docs 19 6장)
+        ("툭툭 털고 달려갔어요", "quadruped", "run"),
+        ("천천히 다시 걸었어요", "quadruped", "walk"),
+        ("가만히 기다렸어요", "quadruped", "walk"),
+        ("어른을 불렀어요", "quadruped", "walk"),
+        ("신나게 춤을 춰요", "quadruped", "walk"),
+        # 사람은 행동 문구 그대로
+        ("가만히 기다렸어요", "biped", "wave_hello_gentle"),
+        ("가만히 기다렸어요", None, "wave_hello_gentle"),
+        ("신나게 춤을 춰요", "biped", "dab_gentle"),
+    ],
+)
+def test_short_story_motion_follows_the_form(action, form, motion):
+    # 짧은 이야기 렌더와 응답 action_motion 이 같은 것을 쓴다 (11/6 이야기 15편 점검 — 전에는 응답이 모두 wave)
+    from app.services.jobs import short_motion
+
+    assert short_motion(action, form) == motion

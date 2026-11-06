@@ -1,5 +1,7 @@
 """가만히 쪽을 쪽 글에 맞는 동작으로 바꾸기 · 새 동작 상한 (2026-11-04, pt_docs 17)."""
 
+import pytest
+
 from app.services.book import ACTIONS, Book, Page
 from app.services.page_motions import FALLBACK, NEW_ACTIONS, NEW_PER_STORY, cap_new, liven
 from app.services.voices import NARRATOR
@@ -69,3 +71,32 @@ def test_retag_rules():
     assert problems(["walk"] * 4 + ok[4:], 8)                     # 네 쪽 연속
     assert problems(["breathe", "walk"] * 4, 8)                   # 숨쉬기가 세 쪽을 넘는다
     assert problems(["swim", "fly", "kick", "point", "walk", "run", "jump", "dance"], 8)  # 새 동작 네 가지
+
+
+@pytest.mark.parametrize(
+    "text,action",
+    [
+        # 아닌 말은 기분 동작으로 고르지 않는다 (11/6 이야기 15편 점검: 「안 무서워요」 쪽이 떨기였다)
+        ("“이제 하나도 안 무서워요!”", "breathe"),
+        ("하나도 안무서웠어요.", "breathe"),
+        ("이제 춥지 않았어요.", "breathe"),
+        ("무서운 마음이 어느새 사라졌어요.", "breathe"),
+        ("웃음이 나지 않았어요.", "breathe"),
+        ("친구는 안 웃었어요.", "breathe"),
+        ("웃음이 쏙 사라져 버렸어요.", "breathe"),
+        # 아닌 말이 아니면 그대로
+        ("무서워서 덜덜 떨었어요.", "shiver"),
+        ("너무 추워서 오들오들했어요.", "shiver"),
+        ("모두 깔깔 웃었어요.", "hooray"),
+        ("나는 웃음이 났어요.", "hooray"),
+        # 한 문장은 아닌 말이어도 다른 낱말 · 다른 문장이 맞으면 그 동작
+        ("안 무섭다고 했지만 덜덜 떨었어요.", "shiver"),
+        ("무서움이 사라졌어요. 우리는 깔깔 웃었어요.", "hooray"),
+        ("이제 안 무서워요. 그래도 몸이 덜덜 떨렸어요.", "shiver"),
+        # 몸짓 낱말은 「못 ~」 이어도 그 몸짓 (찾는 몸짓은 맞다)
+        ("공을 끝내 못 찾았어요.", "search"),
+        ("찾던 공이 사라졌어요. 두리번두리번 살폈어요.", "search"),
+    ],
+)
+def test_negated_mood_words_are_not_chosen(text, action):
+    assert liven(_book(("result", "idle", text))).pages[0].action == action

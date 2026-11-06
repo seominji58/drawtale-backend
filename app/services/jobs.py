@@ -418,6 +418,19 @@ def motion_for(action: str) -> str:
     return DEFAULT_MOTION
 
 
+def short_motion(action: str, form: str | None) -> str:
+    """짧은 이야기 행동 쪽의 렌더 동작. 그 형태가 못 하는 동작이면 걷기 (pt_docs 19 6장).
+
+    렌더(render_story)와 응답의 action_motion 이 같은 것을 쓴다 — 전에는 응답이 형태를 몰라 사람 아닌 주인공
+    짧은 이야기가 모두 손 흔들기(wave)로 나갔고, 화면은 걷기 영상을 제자리 동작으로 보였다 (11/6 이야기 15편 점검)."""
+
+    motion = motion_for(action)
+    allowed = forms.render_motions(form)
+    if allowed is not None and motion not in allowed:
+        motion = "walk"
+    return motion
+
+
 def _hero_form(form: str | None) -> dict | None:
     """사람(2족형)이 아닌 주인공의 형태 정의 — 이야기 지시문에 모습을 알린다. 사람이면 None."""
     return None if (form or forms.DEFAULT) == forms.DEFAULT else forms.get(form)
@@ -619,10 +632,7 @@ def render_story(story: Story, character: Character, storage) -> str | None:
     S-09 장면 층으로 보이게 (2026-11-03 사용자 「짧은 쪽 이야기에는 지금까지 개발한 것들이 적용 안 된 거 같은데」).
     없으면 렌더해서 영상 옆에 묶음도 둔다."""
 
-    motion = motion_for(story.action)
-    allowed = forms.render_motions(character.form)
-    if allowed is not None and motion not in allowed:
-        motion = "walk"        # 4족형: 행동 카드 동작이 없으면 걷기 (pt_docs 19 6장)
+    motion = short_motion(story.action, character.form)
     ready = dict(character.motion_clips or {})
     if character.preview_blob_path:
         ready[DEFAULT_MOTION] = character.preview_blob_path
@@ -642,7 +652,7 @@ def render_story(story: Story, character: Character, storage) -> str | None:
             RenderRequest(
                 request_id=character.ai_request_id,
                 joints=[Joint.model_validate(j) for j in current_joints(character)],
-                motion=motion_for(story.action),
+                motion=motion,   # 전에는 motion_for(...) 그대로 — 사람 아닌 주인공에 그 형태가 못 하는 동작을 보냈다
             ),
         )
     if result and result.content:

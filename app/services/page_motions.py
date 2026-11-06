@@ -64,9 +64,36 @@ WALK_WORDS: list[tuple[tuple[str, ...], str]] = [
 PLACE_ACTION = {"sea": "swim", "바다": "swim"}
 
 
+# 기분 낱말은 아닌 말이면 고르지 않는다 — 「이제 하나도 안 무서워요」가 떨기, 「웃음이 사라졌어요」가 만세가 됐다
+# (11/6 이야기 15편 점검). 찾기 · 걷기 같은 몸짓 낱말은 「못 찾았어요」여도 찾는 몸짓이 맞아 그대로 둔다
+NEGATABLE = {"hooray", "shiver"}
+# 낱말 바로 앞 · 같은 문장 낱말 뒤에 있으면 아닌 말
+NEG_BEFORE = ("안 ", "안")
+NEG_AFTER = ("지 않", "지않", "사라졌", "사라지", "사라져")
+_SENTENCE_END = ".!?\n”\""
+
+
+def _negated(text: str, i: int, word: str) -> bool:
+    if any(text[max(0, i - len(n)):i] == n for n in NEG_BEFORE):
+        return True
+    rest = text[i + len(word):]
+    end = min((rest.find(c) for c in _SENTENCE_END if c in rest), default=len(rest))
+    return any(n in rest[:end] for n in NEG_AFTER)
+
+
+def _says(text: str, word: str, action: str) -> bool:
+    """text 에 word 가 (기분 낱말이면 아닌 말이 아니게) 나오나."""
+    i = text.find(word)
+    while i >= 0:
+        if action not in NEGATABLE or not _negated(text, i, word):
+            return True
+        i = text.find(word, i + 1)
+    return False
+
+
 def _match(text: str, table: list[tuple[tuple[str, ...], str]]) -> str | None:
     for words, action in table:
-        if any(w in text for w in words):
+        if any(_says(text, w, action) for w in words):
             return action
     return None
 

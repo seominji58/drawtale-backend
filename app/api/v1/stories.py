@@ -25,7 +25,7 @@ from app.schemas.story import (
 )
 from app.services import forms
 from app.services.jobs import (
-    MOTION_ACTION, cancel_job, current_joints, facing_of, motion_for, read_sprite_meta, read_still_hands, run_story_job, sprite_path_for,
+    MOTION_ACTION, cancel_job, current_joints, facing_of, read_sprite_meta, read_still_hands, run_story_job, short_motion, sprite_path_for,
 )
 from app.services.storage import get_storage
 
@@ -212,7 +212,7 @@ def story_response(story: Story) -> StoryResponse:
         sprite_url=storage.url(sprite_path_for(clip)) if meta else None,
         sprite_frames=meta["frames"] if meta else None,
         sprite_box=meta["box"] if meta else None,
-        action_motion=MOTION_ACTION.get(motion_for(story.action), "wave"),
+        action_motion=MOTION_ACTION.get(short_motion(story.action, hero_form), "wave"),
         created_at=story.created_at,
         updated_at=story.updated_at,
     )
