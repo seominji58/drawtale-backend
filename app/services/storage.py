@@ -12,7 +12,7 @@ import hmac
 import logging
 import secrets
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qs, quote
@@ -27,6 +27,18 @@ log = logging.getLogger(__name__)
 
 # 로컬 파일 주소 서명 키. FILE_URL_SECRET 이 없으면 켤 때마다 새로 만든다
 _FILE_KEY = (get_settings().file_url_secret or secrets.token_hex(32)).encode()
+
+
+# 주소 만료 시각을 이 단위(초)로 올림한다 — 같은 파일은 이 동안 같은 주소라 브라우저가 캐시하고(전에는 매초 주소가 바뀌어
+# 책장 · 그림책이 같은 그림 · 영상 · 음성을 다시 받았다), 주소를 비교하는 코드 · 시험이 초 경계에서 흔들리지 않는다 (11/6).
+# 열리는 시간은 그대로 최소 N시간 (최대 N시간 + 10분)
+URL_EXPIRY_STEP = 600
+
+
+def stable_expiry(hours: int, now: float | None = None) -> int:
+    """지금부터 최소 hours 시간 뒤, URL_EXPIRY_STEP 단위로 올림한 만료 시각 (유닉스 초)."""
+    now = time.time() if now is None else now
+    return -(-int(now) // URL_EXPIRY_STEP) * URL_EXPIRY_STEP + hours * 3600
 
 
 def file_signature(path: str, exp: int) -> str:
@@ -78,7 +90,7 @@ class LocalStorage:
         """기한 · 서명이 붙은 주소 (azure SAS 와 같은 구실)."""
         if not path:
             return None
-        exp = int(time.time()) + get_settings().file_url_hours * 3600
+        exp = stable_expiry(get_settings().file_url_hours)
         sig = file_signature(path, exp)
         return f"{self.public_base_url}/files/{quote(path)}?exp={exp}&sig={sig}"
 
@@ -147,7 +159,7 @@ class AzureBlobStorage:
             blob_name=path,
             account_key=self.service.credential.account_key,
             permission=BlobSasPermissions(read=True),
-            expiry=datetime.now(UTC) + timedelta(hours=self.sas_hours),
+            expiry=datetime.fromtimestamp(stable_expiry(self.sas_hours), UTC),
         )
         return f"{self._blob(path).url}?{token}"
 

@@ -40,7 +40,8 @@ def test_delete_original(client, png_bytes):
 
     res = client.post("/api/v1/stories", json={"character_id": cid, **_STORY})
     first = client.get(f"/api/v1/stories/{res.json()['story_id']}").json()
-    assert first["animation_url"] == image_url  # 목 AI 는 원본을 animation 으로 준다
+    # 목 AI 는 원본을 animation 으로 준다. 주소의 서명 · 기한(?exp=&sig=)이 아니라 파일로 비교한다
+    assert first["animation_url"].split("?")[0] == image_url.split("?")[0]
 
     assert client.delete(f"/api/v1/characters/{cid}/original").status_code == 204
     assert client.delete(f"/api/v1/characters/{cid}/original").status_code == 204  # 여러 번 괜찮다
@@ -132,3 +133,21 @@ def test_story_keeps_its_own_still_after_original_is_deleted(client, png_bytes, 
     assert still and f"results/{sid}/still.png" in still
     path = still.split("/files/", 1)[1].split("?")[0]
     assert get_storage().read(path) == b"png-cutout"
+
+
+def test_file_urls_stay_the_same_for_a_while(monkeypatch):
+    # 같은 파일은 10분 단위로 같은 주소 — 브라우저 캐시 · 주소 비교가 초 경계에서 흔들리지 않게 (11/6)
+    from app.services import storage
+
+    base = 1_800_000_000          # 10분 단위 경계
+    assert storage.stable_expiry(24, base + 1) == storage.stable_expiry(24, base + 599)
+    assert storage.stable_expiry(24, base + 1) != storage.stable_expiry(24, base + 601)
+    for now in (base, base + 1, base + 599):   # 열리는 시간은 늘 24시간 이상, 24시간 10분 이하
+        left = storage.stable_expiry(24, now) - now
+        assert 24 * 3600 <= left <= 24 * 3600 + storage.URL_EXPIRY_STEP
+
+    s = storage.get_storage()
+    monkeypatch.setattr(storage.time, "time", lambda: base + 10)
+    first = s.url("uploads/a.png")
+    monkeypatch.setattr(storage.time, "time", lambda: base + 500)
+    assert s.url("uploads/a.png") == first
