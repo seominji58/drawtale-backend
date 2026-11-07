@@ -48,6 +48,10 @@ class TextToSpeech:
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 # 캐릭터 목소리 판: 여러 목소리를 한 번에 읽는다 (v4 로 확인, 2026-10-08)
 ELEVENLABS_DIALOGUE_URL = "https://api.elevenlabs.io/v1/text-to-dialogue"
+# 보호자 목소리(복제)는 원래 목소리에 더 가깝게 읽는다 (11/7 사용자 「목소리가 다르게 나오는 것 같아」).
+# 기본 나레이터는 예전 그대로
+CLONED_SIMILARITY = 0.9
+CLONED_STABILITY = 0.5
 # 테스트가 httpx.MockTransport 로 바꾼다
 _TRANSPORT: httpx.BaseTransport | None = None
 
@@ -61,6 +65,7 @@ class ElevenLabsSpeech:
         voice_id: str,
         model_id: str,
         timeout: float = 60.0,
+        cloned: bool = False,
     ) -> None:
         self.api_key, self.voice_id, self.model_id, self.timeout = (
             api_key,
@@ -68,6 +73,8 @@ class ElevenLabsSpeech:
             model_id,
             timeout,
         )
+        # 보호자 목소리(Instant Voice Cloning) 로 읽는다
+        self.cloned = cloned
 
     def speak(self, text: str) -> bytes:
         with httpx.Client(timeout=self.timeout, transport=_TRANSPORT) as http:
@@ -80,8 +87,8 @@ class ElevenLabsSpeech:
                     "model_id": self.model_id,
                     # OpenAI 판과 같이 조금 천천히, 또박또박 (speed 1.0 이 보통)
                     "voice_settings": {
-                        "stability": 0.6,
-                        "similarity_boost": 0.75,
+                        "stability": CLONED_STABILITY if self.cloned else 0.6,
+                        "similarity_boost": CLONED_SIMILARITY if self.cloned else 0.75,
                         "speed": TTS_SPEED,
                     },
                 },
@@ -135,6 +142,7 @@ def get_tts(narrator_voice_id: str | None = None) -> TextToSpeech | ElevenLabsSp
             voice_id,
             settings.elevenlabs_model_id,
             timeout=settings.tts_timeout_seconds,
+            cloned=bool(narrator_voice_id),
         )
     if narrator_voice_id:
         log.warning("보호자 목소리는 ElevenLabs 에서만 읽습니다. 기본 나레이터로 읽습니다")
@@ -170,8 +178,9 @@ def add_voice(name: str, audio: bytes, filename: str, content_type: str) -> str:
             data={
                 "name": name,
                 "description": "drawtale guardian narrator",
-                # 집에서 녹음하니 잡음을 걷어 낸다
-                "remove_background_noise": "true",
+                # 잡음 걷기는 끈다 (11/7): 브라우저도 잡음을 지운 녹음을 한 번 더 걸러 목소리 결이 바뀌었다.
+                # 프론트가 날 녹음(44.1kHz)을 보내고, 화면이 조용한 곳에서 읽어 달라고 안내한다
+                "remove_background_noise": "false",
             },
             files={"files": (filename, audio, content_type)},
         )

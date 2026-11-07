@@ -72,3 +72,38 @@ def test_elevenlabs_dialogue(monkeypatch):
     # 대사에만 감정 태그가 붙는다
     texts = [i["text"] for i in inputs]
     assert texts == ["나는 친구에게", "[warmly] 미안해.", "[happy] 괜찮아.", "안녕."]
+
+
+def test_guardian_voice_reads_closer_to_the_recording(monkeypatch):
+    """보호자 목소리(복제)는 원래 목소리에 더 가깝게, 기본 나레이터는 예전 그대로 (11/7)."""
+    s = get_settings()
+    monkeypatch.setattr(s, "tts_provider", "elevenlabs")
+    monkeypatch.setattr(s, "elevenlabs_api_key", "k")
+    monkeypatch.setattr(s, "elevenlabs_voice_id", "anna")
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=b"ID3")
+
+    monkeypatch.setattr(tts, "_TRANSPORT", httpx.MockTransport(handler))
+    tts.get_tts().speak("가")
+    tts.get_tts("guardian-voice").speak("가")
+    plain, cloned = (b["voice_settings"] for b in bodies)
+    assert plain["similarity_boost"] == 0.75 and plain["stability"] == 0.6
+    assert cloned["similarity_boost"] == tts.CLONED_SIMILARITY > plain["similarity_boost"]
+
+
+def test_add_voice_does_not_filter_again(monkeypatch):
+    """브라우저 녹음을 한 번 더 잡음 걷기 하지 않는다, 목소리 결이 바뀌었다 (11/7)."""
+    s = get_settings()
+    monkeypatch.setattr(s, "elevenlabs_api_key", "k")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.content
+        return httpx.Response(200, json={"voice_id": "v1"})
+
+    monkeypatch.setattr(tts, "_TRANSPORT", httpx.MockTransport(handler))
+    assert tts.add_voice("g", b"RIFF", "voice.wav", "audio/wav") == "v1"
+    assert b'name="remove_background_noise"\r\n\r\nfalse' in seen["body"]
