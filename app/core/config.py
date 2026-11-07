@@ -8,20 +8,100 @@ class Settings(BaseSettings):
 
     app_env: str = "local"
 
-    database_url: str = "postgresql+psycopg://drawtale:drawtale@localhost:5432/drawtale"
+    database_url: str = "postgresql+psycopg://drawtale:drawtale@127.0.0.1:5433/drawtale"
 
     ai_service_url: str = "http://127.0.0.1:8001"
     ai_use_mock: bool = True
-    ai_timeout_seconds: float = 60
+    # AI 는 렌더를 한 번에 하나씩 한다 — 다른 사람 렌더를 기다리는 시간까지 (drawtale-ai main.RENDER_LOCK)
+    ai_timeout_seconds: float = 120
+    rate_limit_enabled: bool = True
 
+    public_base_url: str = "http://127.0.0.1:8000"
+    storage_backend: str = "local"
+    local_storage_dir: str = "./storage"
+    max_upload_mb: int = 10
+    # 「원본 그림 보관」을 끈 그림은 프론트가 지우라고 하지 않아도 이 시간이 지나면 지운다
+    original_retention_hours: int = 24
+
+    # STORAGE_BACKEND=azure 일 때만 쓴다. 컨테이너는 환경마다 하나 (drawtale-dev · drawtale-prod)
     azure_storage_connection_string: str = ""
-    blob_container_uploads: str = "dev-uploads"
-    blob_container_results: str = "dev-results"
+    azure_blob_container: str = "drawtale-dev"
+    # 파일 주소(SAS)의 유효 시간. 응답마다 새로 발급하므로 짧아도 된다
+    azure_sas_hours: int = 2
 
     openai_api_key: str = ""
+    openai_timeout_seconds: float = 30
+    # 긴 이야기(length=long)의 쪽 수. 7~11 로 맞춘다 (services/book.py).
+    # 쪽 수는 아직 정하지 않았다 (2026-10-12)
+    story_pages: int = 8
+    # 긴 이야기 대본의 예비 모델 (Claude 가 실패할 때). 네 문장 판은 아래 story_short_* (Claude) 가 먼저다.
+    # gpt-4o-mini 는 카드 뜻을 뒤집고(도와줬어요 → 도움을 요청) 쪽 배치를 어겨서 바꿨다
+    # (2026-10-12 4편 비교)
+    story_book_model: str = "gpt-5.4-mini"
+    # 긴 이야기 대본 업체: "anthropic"(기본) | "openai".
+    # Claude Opus 5.5 로 바꿨다 (2026-10-27, 30편 비교: 대본 30/30 · 장면 계획 30/30 ·
+    # 위험한 아이 말을 상상으로 바꿈. gpt-5.4-mini 는 29/30 · 20/30 —
+    # hankan-story/experiments/storybook-script/compare_1027).
+    # ANTHROPIC_API_KEY 가 없거나 Claude 호출이 실패하면 위 story_book_model(OpenAI)로,
+    # 그것도 안 되면 틀 문장 그림책. 검열(moderation)은 그대로 OpenAI 라서
+    # OPENAI_API_KEY 가 필요하다
+    story_book_provider: str = "anthropic"
+    anthropic_api_key: str = ""
+    anthropic_timeout_seconds: float = 180
+    story_book_claude_model: str = "claude-opus-5-5"
+    # 생각 정도: low | medium | high. medium 이 low 보다 첫 시도 실수가 적었다
+    # (10편 시험, 편당 약 40초 · $0.10)
+    story_book_effort: str = "medium"
+    # 짧은 이야기(네 문장 · 캐릭터 목소리 대본)도 Claude 로 쓴다 (2026-10-28 사용자 「전부 클로드로」).
+    # 시험에서 gpt-4o-mini 가 「어른을 불렀어요 → 친구가 생겼어요」를 「그 어른이 친구가 되었어요」로 바꾸는 등
+    # 카드 뜻을 비틀었다. "anthropic"(기본) | "openai". Claude 가 실패하면 그 시도만 gpt-4o-mini
+    story_short_provider: str = "anthropic"
+    story_short_claude_model: str = "claude-opus-5-5"
+    # 네 문장이라 생각을 적게 — 빠르고 싸다
+    story_short_effort: str = "low"
     tts_api_key: str = ""
+    tts_timeout_seconds: float = 60
+    # 이야기 음성 업체: "openai" (기본) | "elevenlabs". 청취 비교 후 팀이 고른다
+    tts_provider: str = "openai"
+    elevenlabs_api_key: str = ""
+    # ElevenLabs 목소리 id (콘솔 Voices 에서 복사). 비어 있으면 음성 없이 진행한다
+    elevenlabs_voice_id: str = ""
+    # 한국어를 읽는 모델. 청취 비교로 v4 를 골랐다 (2026-10-08, multilingual_v2 보다 자연스러움).
+    # 속도·비용을 줄이려면 flash_v2_5
+    # 2026-10-29 청취 비교로 turbo — v4 와 별 차이 없고 크레딧이 절반 (사용자)
+    elevenlabs_model_id: str = "eleven_v4_turbo"
+    # 캐릭터 목소리 판의 인물 목소리는 app/services/voices.py 목록에 있다
+
+    # Social login (authorization code flow). Secrets live only here, never in the frontend.
+    # A provider with an empty client id answers 503 PROVIDER_NOT_CONFIGURED.
+    kakao_client_id: str = ""
+    kakao_client_secret: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    auth_token_days: int = 30
 
     cors_origins: str = "http://localhost:5173"
+
+    # ---- 보안 (2026-11-02) ----
+    # 로컬 저장소(/files) 주소에 붙이는 서명 키.
+    # 비어 있으면 켤 때마다 새로 만든다 (다시 켜면 예전 주소는 안 열림).
+    # 배포에서 STORAGE_BACKEND=local 로 쓴다면 꼭 정한다. azure 는 SAS 주소라 쓰지 않는다
+    file_url_secret: str = ""
+    # 로컬 파일 주소가 열리는 시간 (azure 는 azure_sas_hours)
+    file_url_hours: int = 24
+    # 이야기 하루 한도 — 유료 API 를 막는 둑. 분당 · 동시 제한(rate_limit.py)에 더해
+    # 비회원은 IP 마다, 회원은 계정마다(rate_limit.daily), 전체는 서버 하나(DB 로 셈)
+    guest_stories_per_day: int = 30
+    member_stories_per_day: int = 60
+    max_stories_per_day: int = 1000
+    # 그림 픽셀 수 상한. 작은 파일에 아주 큰 그림을 담아 메모리를 터뜨리는 것을 막는다 (5000×5000)
+    max_image_pixels: int = 25_000_000
+    # API 문서(/docs · /openapi.json). 비우면 APP_ENV 가 prod · production 일 때 끈다
+    enable_docs: bool | None = None
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("prod", "production")
 
     @property
     def cors_origin_list(self) -> list[str]:

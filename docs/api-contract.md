@@ -1,0 +1,731 @@
+# DrawTale API 계약서 (초안 v0.1)
+
+> 작성: Backend · 2026-09-28
+> 대상: Frontend, A1(AI Runtime) — **⚠ 표시 항목은 합의가 필요합니다.**
+> 실제 동작하는 명세는 Backend 실행 후 `http://127.0.0.1:8000/docs` (Swagger)에서 확인할 수 있습니다.
+
+---
+
+## 0. 전체 흐름
+
+```text
+Frontend                         Backend                              AI (A1)
+   │ POST /api/v1/characters (그림)   │                                   │
+   │ ─────────────────────────────▶ │ 파일 저장 + analyze Job 생성          │
+   │ ◀── 202 {character_id, job_id} │ ── POST /internal/v1/analyze ────▶ │
+   │                                │ ◀── bbox, mask, 15 joints ──────── │
+   │ GET /api/v1/jobs/{job_id} (반복) │                                   │
+   │ ◀── status: succeeded          │                                   │
+   │ GET /api/v1/characters/{id}    │                                   │
+   │ ◀── 이미지, 관절 15개            │                                   │
+   │ PATCH .../joints (사용자 보정)    │                                   │
+   │ POST /api/v1/stories (4단계 선택) │ story Job 생성                     │
+   │ ◀── 202 {story_id, job_id}     │ ── GPT/TTS + POST /internal/v1/render ▶ │
+   │ GET /api/v1/jobs/{job_id} (반복) │                                   │
+   │ GET /api/v1/stories/{id}       │                                   │
+   │ ◀── 텍스트, 음성, 애니메이션 URL   │                                   │
+```
+
+- 오래 걸리는 작업(분석, 이야기 생성)은 **즉시 `202` + `job_id`**를 반환하고, Frontend는 `GET /api/v1/jobs/{job_id}`를 **1~2초 간격으로 polling**한다.
+- `status`가 `succeeded` 또는 `failed`가 되면 polling을 멈춘다.
+
+---
+
+## 1. 공통 규칙
+
+### 1-1. 관절 15개 (프로젝트 표준) ⚠ A1 확인 필요
+
+Meta AnimatedDrawings skeleton에서 `root`를 뺀 15개. **배열 순서도 아래 순서로 고정**한다.
+
+| # | name | 설명 |
+|---|---|---|
+| 1 | `hip` | 골반 중심 |
+| 2 | `torso` | 몸통 중심 |
+| 3 | `neck` | 목 |
+| 4 | `right_shoulder` | 오른쪽 어깨 |
+| 5 | `right_elbow` | 오른쪽 팔꿈치 |
+| 6 | `right_hand` | 오른손 |
+| 7 | `left_shoulder` | 왼쪽 어깨 |
+| 8 | `left_elbow` | 왼쪽 팔꿈치 |
+| 9 | `left_hand` | 왼손 |
+| 10 | `right_hip` | 오른쪽 엉덩이 |
+| 11 | `right_knee` | 오른쪽 무릎 |
+| 12 | `right_foot` | 오른발 |
+| 13 | `left_hip` | 왼쪽 엉덩이 |
+| 14 | `left_knee` | 왼쪽 무릎 |
+| 15 | `left_foot` | 왼발 |
+
+> `right` / `left`는 **그림 속 캐릭터 기준**이다. (화면에서 보면 캐릭터의 오른손은 왼쪽에 있다.)
+
+### 1-2. 좌표 기준 (`coordinate_space: "image_px"`)
+
+- **업로드한 원본 이미지의 픽셀 좌표**. 원점은 왼쪽 위, x는 오른쪽, y는 아래로 증가.
+- Frontend는 화면에 맞게 축소해서 그릴 때 `화면좌표 = 원본좌표 × (표시 너비 / image_width)`로 변환하고, **서버에 보낼 때는 다시 원본 좌표로** 보낸다.
+- AI도 crop/resize 내부 좌표를 쓰더라도 **응답은 반드시 원본 이미지 좌표로 변환**해서 준다.
+
+```json
+{ "name": "neck", "x": 200.0, "y": 165.6 }
+```
+
+### 1-3. Job 상태
+
+| status | 의미 | Frontend 처리 |
+|---|---|---|
+| `pending` | 대기 중 | 로딩 표시, polling 계속 |
+| `running` | 처리 중 | 로딩 표시, polling 계속 |
+| `succeeded` | 완료 | polling 중단, 결과 조회 |
+| `failed` | 실패 | polling 중단, `error.message` 표시 + 재시도 버튼 |
+
+### 1-4. 에러 응답 형식
+
+모든 에러는 같은 형식이다.
+
+```json
+{
+  "error": {
+    "code": "INVALID_IMAGE",
+    "message": "PNG 또는 JPG 이미지만 올릴 수 있어요.",
+    "detail": null
+  }
+}
+```
+
+- `code`: 프로그램이 분기할 때 쓰는 값 (영문 대문자)
+- `message`: **사용자에게 그대로 보여줘도 되는 한국어 문장**
+- `detail`: 추가 정보 (없으면 `null`)
+
+| code | HTTP | 언제 |
+|---|---|---|
+| `VALIDATION_ERROR` | 422 | 요청 형식 오류 (필드 누락, 관절 개수 틀림 등) |
+| `RATE_LIMITED` | 429 | 요청이 너무 잦음 (F-NFR-10, `app/core/rate_limit.py`). 분당 그림 5 · 이야기 3 · 보호자 목소리 3 · 로그인 5(회원은 계정, 비회원은 IP 로 ×4), 같은 작업이 돌고 있으면 막음, 이야기 하루 비회원 30 · 회원 60(`GUEST_STORIES_PER_DAY` · `MEMBER_STORIES_PER_DAY`). `Retry-After` 머리말이 붙는다 |
+| `DAILY_LIMIT` | 503 | 서버 전체 이야기 하루 상한(`MAX_STORIES_PER_DAY`, 기본 1000)을 넘음 — 유료 API 둑 |
+| `INVALID_IMAGE` | 400 | 이미지가 아니거나 PNG/JPG가 아님 |
+| `FILE_TOO_LARGE` | 400 | 10MB 초과 |
+| `JOINT_OUT_OF_IMAGE` | 400 | 관절 좌표가 이미지 밖 |
+| `CHARACTER_NOT_FOUND` | 404 | 없는 캐릭터 |
+| `JOB_NOT_FOUND` | 404 | 없는 Job |
+| `STORY_NOT_FOUND` | 404 | 없는 이야기 |
+| `CHARACTER_NOT_READY` | 409 | 분석이 끝나기 전에 관절 수정/이야기 생성 요청 |
+| `AI_TIMEOUT` | Job error | AI 처리 시간 초과 |
+| `AI_UNAVAILABLE` | Job error | AI 서버 연결 불가 |
+| `AI_ERROR` 등 AI가 준 code | Job error | AI 처리 실패 (A1 정의 code 그대로 전달) |
+| `NO_CHARACTER_DETECTED` | Job error | 그림에서 캐릭터를 찾지 못함 (너무 흐린 사진 포함) |
+| `MULTIPLE_CHARACTERS` | Job error | 따로 떨어진 사람이 둘 이상 (3-2) |
+| `LOW_CONFIDENCE` | Job error | 사람 모양으로 보기 어려운 그림 — 낙서, 도형 (3-2) |
+| `INTERNAL_ERROR` | Job error | 알 수 없는 서버 오류 |
+| `CONTENT_BLOCKED` | Job error | 이야기 입력이나 만든 문장이 OpenAI moderation 에 걸림. 이야기를 만들지 않는다 |
+| `UNAUTHORIZED` | 401 | 로그인이 필요한 요청에 토큰이 없거나 만료됨 |
+| `UNKNOWN_PROVIDER` | 404 | 지원하지 않는 소셜 로그인 제공자 |
+| `SIGNUP_REQUIRED` | 409 | 처음 온 사용자가 약관 동의(`agreed: true`) 없이 소셜 로그인 |
+| `OAUTH_FAILED` | 400 | 인가 코드 교환 실패 (만료·재사용·redirect_uri 불일치 등) |
+| `PROVIDER_NOT_CONFIGURED` | 503 | 서버에 해당 제공자 키가 설정되지 않음 |
+| `PROVIDER_UNAVAILABLE` | 503 | 제공자 서버에 연결할 수 없음 |
+
+> `Job error`는 HTTP 응답이 아니라 `GET /api/v1/jobs/{id}`의 `error` 필드로 전달된다.
+
+---
+
+## 2. Public API (Frontend → Backend)
+
+Base URL: 로컬 `http://127.0.0.1:8000`, 배포 `https://api.<도메인>`
+
+### 2-1. `POST /api/v1/characters` — 그림 업로드 + 분석 시작
+
+- Content-Type: `multipart/form-data`
+- 필드: `image` (PNG 또는 JPG, 최대 10MB)
+- 필드: `form` (선택, 기본 `biped`, 2026-11-04) — 그림의 몸 구조, **형태**(pt_docs 19). 값은 2-13 `GET /api/v1/forms` 의 `id`.
+  화면 「누구를 그렸어요?」에서 고른 것. 준비 안 된 형태 · 없는 형태면 `422 UNKNOWN_FORM`. 형태마다 관절 이름 · 개수가 다르다
+- 필드: `keep_original` (선택, 기본 `false`) — S-13 「원본 그림 보관」. `false` 면 원본을 2-10 으로 지우거나, 요청이 없어도 `ORIGINAL_RETENTION_HOURS`(기본 24시간) 뒤 서버가 지운다. 분석에 실패한 그림은 바로 지운다
+
+**응답 `202`**
+
+```json
+{
+  "character_id": "68510684-d212-4710-a2fd-6dc76665c1d8",
+  "job_id": "b2f38c23-d05e-4b97-b89a-1fd8aeb197c1",
+  "status": "pending"
+}
+```
+
+### 2-2. `GET /api/v1/jobs/{job_id}` — 진행 상태 조회 (polling)
+
+**응답 `200`**
+
+```json
+{
+  "id": "b2f38c23-d05e-4b97-b89a-1fd8aeb197c1",
+  "type": "analyze",
+  "status": "succeeded",
+  "character_id": "68510684-d212-4710-a2fd-6dc76665c1d8",
+  "story_id": null,
+  "error": null,
+  "created_at": "2026-09-28T02:20:11.123Z",
+  "updated_at": "2026-09-28T02:20:12.456Z"
+}
+```
+
+- `type`: `analyze` | `story`
+- 실패 시 `"status": "failed"`, `"error": {"code": "AI_TIMEOUT", "message": "..."}`
+
+### 2-3. `GET /api/v1/characters/{character_id}` — 캐릭터 조회
+
+**응답 `200`**
+
+```json
+{
+  "id": "68510684-d212-4710-a2fd-6dc76665c1d8",
+  "status": "succeeded",
+  "image_url": "http://127.0.0.1:8000/files/uploads/68510684-....png",
+  "preview_url": "http://127.0.0.1:8000/files/previews/68510684-...-1a2b3c4d.mp4",
+  "preview_status": "ready",
+  "image_width": 400,
+  "image_height": 600,
+  "analysis": {
+    "bbox": { "x": 80, "y": 60, "width": 240, "height": 480 },
+    "mask_url": null,
+    "cutout_url": "https://…/files/cutouts/{id}.png?exp=…&sig=…",
+    "joints": [ { "name": "hip", "x": 200.0, "y": 324.0, "score": 0.9 }, "... 15개" ],
+    "confidence": 0.95,
+    "model_version": "mock-v1",
+    "pipeline_version": "mock",
+    "coordinate_space": "image_px",
+    "processing_time_ms": 0
+  },
+  "joints": [ { "name": "hip", "x": 200.0, "y": 324.0 }, "... 15개" ],
+  "joints_corrected": false,
+  "form": "biped",
+  "joints_found": true,
+  "keep_original": false,
+  "original_deleted_at": null,
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+- `analysis.joints`: **AI가 준 원래 관절** (변하지 않음). 관절마다 `score`
+- `analysis.joints[].score`: 모델이 그 관절을 확신하는 정도 (0~1). 2026-10-02 이전 분석이거나 AI 서버가 주지 않으면 `null`
+- `analysis.confidence`: 캐릭터 검출 점수 (0~1). 없으면 `null`. **낙서에도 높게 나오므로 사람인지 판단에는 관절 점수를 쓴다**
+- Frontend 는 `confidence < 0.6` 이거나 `score < 0.4` 인 관절이 하나라도 있으면 어른 확인(S-05 「어른에게 도움 받기」)을 권하고, S-06 에서 그 관절을 따로 표시한다
+- `joints`: **현재 사용할 관절** — 사용자가 보정했으면 보정값, 아니면 AI 값. `score` 는 없다
+- `joints_corrected`: 사용자가 한 번이라도 보정했는지
+- `form` (2026-11-04): 형태. 관절 이름은 2-13 의 그 형태 `joints` 와 같다 (2족형은 위 15개, 4족형은 `right_hip_b` · `left_foot_f` … · 꼬리 `tail` · `tail_mid` · `tail_tip` 18개. 꼬리가 없는 그림은 꼬리 셋이 `hip` 과 같은 자리)
+- `joints_found` (2026-11-04): AI 가 관절을 **실제로 찾았나**. `false` 면 그 형태의 **기본 뼈대를 그림 크기에 맞춰 놓은 것**이라
+  Frontend 는 관절 고치기(S-06)로 보낸다 — 기본 · 보호자 모드 모두. 예전 캐릭터는 `null`(찾은 것으로 본다)
+- `analysis.cutout_url` (2026-11-03): **배경을 투명하게 잘라 낸 캐릭터 PNG.** AI 가 분석할 때 만든다(3-4).
+  화면이 영상 대신 정지 그림을 보일 때(미리보기를 만드는 중 · 가만히 있는 쪽 · 완료 화면 · 책장 표지) 원본 대신 쓴다 —
+  원본은 사진 배경까지 나온다. 없으면(목 AI · 예전 분석) `null`. 원본을 지우면(2-10) 같이 지운다
+- `image_url`: 원본을 지웠으면 `null`. `original_deleted_at` 이 지운 때다
+- 분석 전(`pending`/`running`)에는 `analysis`, `joints`가 `null`
+- `preview_url` · `preview_status` (2026-10-08): **S-05 미리보기 MP4** — 분석 Job 이 `succeeded` 가 된 **뒤에** Backend 가 AI 렌더(3-3,
+  `wave_hello_gentle`, `max_frames=150`)로 만든다. S-04 의 30초를 지키려고 분석 Job 은 기다리지 않는다.
+  `preview_status`: `rendering`(만드는 중 — Frontend 가 다시 묻는다) · `ready` · `failed` · `null`(만들지 않음: 목 AI, 원본 지움).
+  관절을 보정하면(2-4) `rendering` 으로 돌아가 새로 만들고 옛 파일은 지운다. 원본을 지우면(2-10) 같이 지운다.
+  이 노트북(Core Ultra 7) 기준 사람 그림 10초 · 종이 사진 20초 남짓
+
+### 2-4. `PATCH /api/v1/characters/{character_id}/joints` — 관절 보정 저장
+
+**요청** — **그 캐릭터 형태의 관절** 전부를 보낸다 (움직이지 않은 관절 포함, 2족형 15개 · 4족형 18개). 순서는 상관없고 서버가 형태의 순서로 정렬한다.
+다른 형태의 관절이거나 모자라면 `422 VALIDATION_ERROR` (`detail.form`).
+
+```json
+{
+  "joints": [
+    { "name": "hip", "x": 205.0, "y": 330.0 },
+    "... 15개"
+  ]
+}
+```
+
+**응답 `200`**: 2-3과 같은 캐릭터 객체 (`joints_corrected: true`)
+
+- 분석이 끝나기 전이면 `409 CHARACTER_NOT_READY`
+- 관절이 이미지 밖이면 `400 JOINT_OUT_OF_IMAGE`
+
+### 2-5. `POST /api/v1/stories` — 이야기 생성 시작
+
+**요청**
+
+```json
+{
+  "character_id": "68510684-d212-4710-a2fd-6dc76665c1d8",
+  "place": "학교",
+  "problem": "친구와 다퉜어요",
+  "action": "먼저 사과해요",
+  "result": "다시 사이좋게 놀아요",
+  "voice_mode": "narration",
+  "protagonist_voice": "girl",
+  "protagonist_name": "하루",
+  "length": "long",
+  "spoken": ["problem"]
+}
+```
+
+`length` (선택, 기본 `short`, 2026-10-12) — S-13 「이야기 길이」.
+
+| 값 | 무엇 |
+|---|---|
+| `short` | 지금까지와 같다. 네 칸 → 네 문장 (`book` 은 `null`) |
+| `long` | **네 칸을 뼈대로 쪽 단위 그림책.** 쪽 수는 서버 설정 `STORY_PAGES`(기본 8, 7~11). 장소 1~2 · 문제 2~3 · 행동 2~3 · 결과 2~3쪽으로 나누고, 쪽마다 어느 칸에서 나왔는지(`stage`)를 적는다. 아이가 고르지 않은 큰 사건(다른 장소 · 새 문제 · 새 악당 · 다른 결말)은 만들지 않고, 고른 일을 장면으로 펼쳐 보이기만 한다 (흉내말 · 마음 · 짧은 대사). 모델은 **Claude Opus 5.5**(`STORY_BOOK_PROVIDER=anthropic` · `STORY_BOOK_CLAUDE_MODEL` · `STORY_BOOK_EFFORT=medium`, 2026-10-27). `ANTHROPIC_API_KEY` 가 없거나 Claude 가 실패하면 `STORY_BOOK_MODEL`(OpenAI, 기본 `gpt-5.4-mini`). 대본 한 번에 약 30~40초. AI 가 쓴 대본이 moderation 에 걸리면 다시 쓰고, 끝내 걸리거나 키가 없거나 실패하면 틀 문장 그림책. 대본 규칙은 `app/services/book.py` |
+
+`spoken` (선택) — 카드 글자 대신 **아이가 말로 덧붙인 말**을 보낸 단계(`place` · `problem` · `action` · `result`).
+`long` 이면 대본이 그 말을 거의 그대로 살리고 그 쪽 `child_words` 에 적는다. 화면은 「내가 말한 부분」으로 보인다.
+
+`extras` (선택, 2026-10-27 **시험** — 회의에서 빼면 지운다) — S-07 네 칸 사이에 더 받은 카드 라벨 `{"who": "강아지", "feel_problem": "무서웠어요", "feel_result": "기뻤어요"}` (각 20자, 다 선택).
+`long` 대본에서 「함께 나오는 인물」은 그 인물이 카드 속 「누군가」 몫을 하고, 기분은 문제 쪽 · 마지막 쪽 주인공 마음으로 거의 그대로 쓴다. `short` 에는 아직 안 쓴다. 저장: `stories.extras`(JSON, migration `f8a1b2c3d4e5`). 프론트 `open-decisions.md` 0-11.
+
+**사람이 아닌 주인공(4족형 …)은 `protagonist_name` 이 꼭 있어야 한다 (2026-11-05)** — 없거나 빈칸이면 `422 NAME_REQUIRED`. 화면은 무슨 동물인지 묻지 않으므로 이야기 AI 는 동물을 지어내지 않고 이름(나레이션 판은 「나」)으로 부르며, 네 발 동물이 할 수 있는 행동(걷기 · 뛰기 · 냄새 맡기 · 꼬리 흔들기 …)만 쓴다. 사람 그림은 지금처럼 이름 없이도 된다.
+
+`protagonist_name` 은 나레이션 판에서도 받아 저장한다 (2026-11-02, 나중에 캐릭터 목소리 판으로 바꿀 때 쓰려고). 나레이션 판 글은 「나는」 그대로 — 이름을 넣지 않는다.
+
+`narrator` (선택, 기본 `default`, 2026-11-02) — S-13 「내 목소리로 읽어주기」. `guardian` 이면 **로그인한 보호자가 등록한 목소리**(2-12)로 나레이션을 읽는다.
+`Authorization: Bearer` 가 있어야 계정을 안다. 로그인하지 않았거나 목소리가 없으면 **오류 없이 기본 나레이터**로 읽는다 (아이 흐름을 막지 않는다).
+캐릭터 목소리 판에서도 나레이터만 바뀌고 인물 대사 목소리는 그대로. 미리 만든 카드 이야기여도 저장된 음성(`card_audio/`)을 쓰지 않고
+이 목소리로 그때 만들어 **이 이야기 폴더에만** 둔다 (함께 쓰는 곳에 두지 않음). 쓴 목소리 id 는 `stories.narrator_voice_id` (migration `b1c2d3e4f5a6`).
+`TTS_PROVIDER=elevenlabs` 일 때만 바뀐다. 2-6 응답의 `narrator` 는 실제로 읽은 나레이터 (`default` · `guardian`).
+
+`voice_mode` (선택, 기본 `narration`, 2026-10-08) — S-13 「읽어주기」.
+
+| 값 | `text` | `audio_url` |
+|---|---|---|
+| `narration` | 지금과 같다 | 나레이터(`ELEVENLABS_VOICE_ID`) 하나가 읽는다 |
+| `characters` | GPT 가 짧은 대사를 넣은 네 문장을 **3인칭**으로 쓴다. 주인공은 `protagonist_name`(아이가 지은 이름, 10자까지, 없으면 GPT 가 짓고 저장)으로 부른다. 대사는 `“ ”` 안. 예: `하루는 친구에게 “미안해.” 하고 말했어요.` 이름 뒤 조사는 받침에 맞춘다 | 나레이션은 나레이터, 대사는 인물 목소리 (ElevenLabs `text-to-dialogue`). 주인공 「나」는 `protagonist_voice`(`girl` · `boy`, 기본 `girl`), 다른 인물은 GPT 가 매긴 종류(아이 여/남, 어른 여/남, 할머니, 할아버지, 작은 동물, 큰 동물)로 `app/services/voices.py` 목록에서 겹치지 않게 고른다. 할머니 · 엄마처럼 이름이 곧 종류면 이름을 먼저 본다. 대사마다 감정(기쁨 · 다정 · 신남 · 놀람 · 슬픔 · 속삭임)을 v4 태그로 붙인다 |
+
+`characters` 라도 대본을 못 만들면(키 없음 · 형식 오류) 나레이션 판 글로, 대화 합성이 실패하면 나레이터 하나로 읽는다.
+정한 인물 → 목소리는 `stories.voice_cast` 에 남긴다 (응답에는 없다). TTS 가 `openai` 면 대사도 한 목소리다.
+네 문장이 아니거나 대사가 없으면 GPT 에게 세 번까지 다시 쓰게 한다.
+`eleven_v4` 는 speed 값을 무시한다 — 빠르기 · 감정은 문장 앞 태그(`[happy]` 등)로만 바뀐다 (2026-10-08 측정). 문장 수를 세는 기준은 따옴표 안의 마침표에서 끊지 않는다 (프론트 `sentences()` 와 같음).
+
+**미리 만든 카드 이야기 (2026-10-28, pt_docs 13 1-1)** — 네 칸이 모두 카드표(05 S-07, 2026-10-28 확정)의 글자 그대로이고
+`spoken` · `extras` 가 없으면, 서버는 **대본을 쓰지 않고** 표 `card_stories` 에서 같은 조합 · `length` · `voice_mode` 의
+**사람이 통과시킨(`approved`) 저장본**을 꺼낸다 (대본 0초). 음성 · 영상은 그 글로 지금처럼 만든다.
+저장본이 없거나 draft 면 지금처럼 그때 만든다. 캐릭터 목소리 판 저장본은 주인공 이름 자리가 `{이름}{조사:가}` 로 비어 있어
+`protagonist_name`(없으면 「토토」)을 끼우고 조사를 받침에 맞춘다. 응답 모양은 같다.
+만들기 · 넣기: `python -m scripts.make_card_stories --pilot | --all | --load <json>` (결과는 `storage/card_stories/`, git 밖).
+표: `card_stories` (migration `a9b0c1d2e3f4`), 코드 `app/services/card_stories.py`.
+저장본 이야기의 음성은 (이야기 내용 · 이름 · 읽어주기 · 주인공 목소리 · 음성 업체)마다 처음 한 번 만들어 저장소 `card_audio/` 에 두고, 다음부터는 이 이야기 폴더로 복사해 쓴다 (응답의 `audio_url` · 쪽 `audio_url` 모양은 같다).
+
+> ⚠ **Frontend와 합의 필요:** 지금은 각 단계 값을 **자유 문자열(최대 50자)**로 받는다.
+> 선택지를 서버가 내려줄지(`GET /api/v1/story-options`), 코드 값(`school`, `fight` 등)으로 주고받을지 정해야 한다.
+
+**응답 `202`**
+
+```json
+{ "story_id": "...", "job_id": "...", "status": "pending" }
+```
+
+**그만두기 (2026-11-04)** — `POST /api/v1/stories/{story_id}/cancel` → `202 { "story_id": "...", "status": "running" }`
+
+S-08 「그만하기」에서 부른다. 돌고 있는 작업은 지금 단계(대본 · 음성 · 렌더)를 마치는 대로 멈추고 Job 이
+`failed` · `error.code = "CANCELLED"` 가 된다. 그때 같은 계정(비회원은 그림)의 「작업 중」 자리를 비운다 —
+그 전에 다시 만들면 `429 BUSY`. 이미 끝난 이야기는 그대로 둔다(응답 `status` 가 그때의 Job 상태). 남의 이야기는 `404`.
+
+### 2-6. `GET /api/v1/stories/{story_id}` — 이야기 조회
+
+**응답 `200`**
+
+```json
+{
+  "id": "...",
+  "character_id": "...",
+  "status": "succeeded",
+  "place": "학교",
+  "problem": "친구와 다퉜어요",
+  "action": "먼저 사과해요",
+  "result": "다시 사이좋게 놀아요",
+  "voice_mode": "narration",
+  "protagonist_voice": "girl",
+  "protagonist_name": null,
+  "length": "long",
+  "book": {
+    "title": "숲에 간 날",
+    "pages": [
+      { "page": 1, "stage": "place", "action": "walk", "child_words": "",
+        "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.",
+        "lines": [{ "speaker": "나레이션", "text": "햇살이 반짝이는 날이었어요. 나는 숲에 갔어요.", "emotion": "" }],
+        "audio_url": "http://127.0.0.1:8000/files/results/<story_id>/page01.mp3",
+        "animation_url": "http://127.0.0.1:8000/files/results/<story_id>/jumping_gentle.mp4",
+        "scene": { "hero_on_page": true,
+                   "characters": [{ "name": "할머니", "slot": "right-middle" }],
+                   "background": "A sunny forest path in the morning. 할머니 waves from under a tall tree." } }
+    ],
+    "order_pages": [1, 2, 4, 6],
+    "character_sheet": { "할머니": "a kind grandmother with gray bun hair, purple cardigan" }
+  },
+  "text": "오늘 나는 학교에 갔어요. ...",
+  "audio_url": null,
+  "animation_url": "http://127.0.0.1:8000/files/uploads/....png",
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+각 값이 어디서 오는지 (2026-09-29 dev 기준):
+
+| 필드 | 설정이 있을 때 | 없거나 실패할 때 |
+|---|---|---|
+| `text` | Claude Opus 5.5(`STORY_SHORT_PROVIDER=anthropic` · `STORY_SHORT_CLAUDE_MODEL` · `STORY_SHORT_EFFORT=low`, 2026-10-28)가 네 단계를 이어 쓴다. Claude 가 없거나 실패하면 그 시도만 gpt-4o-mini. 카드로만 고른 이야기는 미리 만든 저장본(2-5). 앞뒤로 moderation 검사 | 템플릿 문장 「오늘 나는 …에 갔어요. 그런데 ….」 |
+| `audio_url` | `text` 를 읽은 mp3. `TTS_PROVIDER=openai`(gpt-4o-mini-tts) 또는 `elevenlabs` | `null`. 음성만 빠지고 이야기는 성공 |
+| `animation_url` | AI 서버가 렌더한 MP4 (3-3). 동작은 `action` 으로 고른다 (4번 표 6) | 목 AI 면 원본 그림 URL |
+
+`book` (2026-10-12) — `length=long` 일 때만. `text` 는 쪽 글을 이어 붙인 것이다.
+**주인공 형태 · 머리 쪽 (2026-11-04)** — 이야기 응답에 `hero_form`(캐릭터 형태 id)과 `hero_facing`(옆모습 형태일 때 머리 쪽 `left` · `right`, 2족형은 `null`)이 온다. 머리 쪽은 캐릭터의 지금 관절(고친 관절이 있으면 그것)에서 목이 엉덩이보다 왼쪽이면 `left`. AI 렌더는 머리 쪽으로 걷게 만들므로, 프론트 S-09 장면 층은 주인공이 머리 반대쪽으로 옮겨 갈 때 좌우로 뒤집는다 (전에는 세션 관절로만 알아서 새로고침 · 책장에서 연 이야기는 뒷걸음질했다).
+
+**주인공 손 위치 (2026-11-04)** — 이야기 응답에 `still_hands`(`{ "l": [x, y], "r": [x, y] }`, 정지 그림 `still_url` 안 비율 0~1 · `l` 은 그림 왼쪽 손)가 온다. 정지 그림을 만들 때 AI 손 관절(`right_hand` · `left_hand`, 고친 관절이 있으면 그것)을 잘라 낸 그림 자리로 바꿔 정지 그림 옆 `still.json` 에 둔다. 프론트 S-09 장면 층이 대본의 「나는 양동이를 꼭 안고」처럼 주인공이 든 소품을 손에 쥐여 준다(주인공이 가만히 있는 쪽만). 예전 이야기는 `null`.
+
+**짧은 이야기 프레임 묶음 (2026-11-03 밤)** — 짧은 이야기(`book` 없음)도 이야기 응답에 `sprite_url` · `sprite_frames` · `sprite_box`(animation_url 동작의 투명 프레임 묶음, 없으면 `null`)와 `action_motion`(행동 카드의 동작 `walk · run · jump · dance · wave`)이 온다. 캐릭터를 만든 직후 미리 렌더한 그 동작을 복사한다(없으면 렌더). 화면은 짧은 이야기도 문장을 네 쪽으로 나눠 긴 이야기와 같은 장면 층으로 보인다.
+
+**투명 프레임 묶음 · 세부 장소 (2026-11-03)** — 쪽에 `sprite_url`(바탕이 투명한 WebP — 정사각 칸 · 가로 늘 8칸, 남는 칸 투명), `sprite_frames`(장 수), `sprite_box`(첫 장에서 그림이 차지하는 자리 `[left, top, right, bottom]`, 칸 대비 0~1)가 온다. 같은 렌더에서 MP4 와 함께 나온다(AI `sprite=true`). 걷기 · 뛰기도 **제자리**로 그린다(2026-11-03 저녁 — 옮기는 것은 화면이 그림 칸째, 렌더의 걸음 속도에 맞춰). 프론트 S-09 가 장면 배경 · 물건 · 인물과 층으로 쌓는다. 예전 이야기 · 예전 AI 는 없음(`null`) — 그때는 MP4. 장 수 · 자리를 서버가 주는 것은 화면이 다른 주소 그림의 픽셀을 못 읽어서(CORS)다. `scene.location` 은 장소 안 세부 장소 id(`school-cafeteria` 등, `app/services/book.py` SCENE_LOCATIONS — 프론트 `public/scenes/{id}` 와 같은 목록). 대본이 쪽마다 고르고, 모르면 `""`.
+
+**쪽마다 음성 · 동작 (2026-10-12)** — 쪽마다 `audio_url`(MP3)과 `animation_url`(MP4)이 온다. 긴 이야기는 이야기 전체 `audio_url` 을 만들지 않는다(`null`).
+- 음성: 쪽 글을 쪽마다 합성 (`results/{story_id}/page01.mp3` …). 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다. 캐릭터 목소리 판은 대사가 있는 쪽만 인물 목소리, 인물 → 목소리는 이야기 전체에서 한 번 정한다. 한 쪽이 실패하면 그 쪽만 `null`
+- 동작: 쪽 `action` 을 순화 동작으로 — `wave` → `wave_hello_gentle`, `walk` · `run` · `jump` · `dance` → `jumping_gentle`, `idle` → 영상 없음(멈춘 그림). 동작마다 한 번만 렌더(150프레임)하고 같은 동작 쪽은 같은 파일. `wave_hello_gentle` 은 S-05 미리보기 영상을 그대로 쓴다. 이야기 `animation_url` 은 첫 쪽 영상(없으면 그림)
+- `order_pages` 는 S-10 순서 맞추기에 쓸 쪽
+
+**장면 계획 `scene` · `character_sheet` (2026-10-27)** — 배경을 실시간으로 그리고 그 안에 다른 인물을 함께 그리는 방향을 위해, 대본과 **같은 호출**에서 쪽마다 배경 그림 계획을 받는다 (Claude Opus 5.5 · effort medium, 실험 10편 10/10). **아직 그림을 그리지는 않는다** — 값만 내려간다.
+- `scene.hero_on_page`: 이 쪽에 주인공(아이 그림)이 나오나. 행동 · 결과 쪽은 늘 `true`. `true` 면 배경의 **왼쪽 아래 1/3 을 비우라는 말을 그림 부르는 쪽이 붙인다** (주인공 자리)
+- `scene.characters`: 배경에 함께 그릴 인물, 한 쪽에 최대 2명, 이야기 전체 최대 3명. `slot` 은 `right-middle` · `right-bottom`. 대본 인물(`characters`)에 없는 인물은 서버가 뺀다
+- `scene.background`: **영어** 배경 지시문 1~2문장(장소 · 시간 · 날씨 · 분위기 · 인물이 하는 일). 인물은 한글 이름으로만 적혀 있으니 그림 부를 때 `character_sheet` 의 생김새로 바꿔 붙인다. 화풍 · 글자 · 주인공 이름은 들어 있지 않다 (주인공 이름이나 글자가 들어가면 서버가 대본을 다시 쓰게 한다)
+- `character_sheet`: 인물 이름 → 영어 생김새. 쪽마다 같은 모습으로 그려지게 한 번만 정한다
+- 틀 문장 그림책(AI 실패)이거나 AI 가 장면 계획을 끝내 못 맞추면 `scene` 은 `null`, `character_sheet` 는 `{}` — 화면은 기본 배경을 쓴다
+- 말풍선은 받지 않는다 (pt_docs 14 「말풍선 없음」)
+
+> moderation 에 걸리면 이야기는 `failed`, Job `error.code` 는 `CONTENT_BLOCKED` 다 (1-4).
+> 설정에 따라 값이 달라질 뿐 **응답 형식은 바뀌지 않는다.**
+
+### 2-7-1. `POST /api/v1/auth/logout` — 로그아웃 (2026-11-02)
+
+`Authorization: Bearer` 의 토큰을 서버에서 지운다. 토큰이 없거나 이미 지워졌어도 `204`. 전에는 프론트가 토큰을 버리기만 해서 서버에서는 30일 동안 살아 있었다.
+
+### 파일 주소 (2026-11-02)
+
+응답의 `*_url`(그림 · 영상 · 음성)은 **기한이 있는 주소**다. azure 는 SAS(`AZURE_SAS_HOURS`, 기본 2시간), 로컬 저장소는 `/files/...?exp=&sig=` 서명(`FILE_URL_HOURS`, 기본 24시간, 키 `FILE_URL_SECRET`). 서명 없이 `/files/` 경로만으로는 404. 저장해 둔 주소로 다시 열 때는 이야기를 다시 조회해 새 주소를 받는다.
+
+### 2-7. `POST /api/v1/auth/{provider}` — 소셜 로그인
+
+`provider`: `kakao` · `google`. 인가 코드 방식이다.
+
+```text
+Frontend ── authorize URL ──▶ 제공자 로그인·동의 화면
+         ◀── {redirect_uri}?code=…&state=… ──
+         ── POST /api/v1/auth/{provider} {code, redirect_uri, agreed} ──▶ Backend
+                                                Backend ── code + client_secret ──▶ 제공자 토큰
+                                                Backend ── access_token ──▶ 제공자 회원 정보 (id 만)
+         ◀── { token, account } ──
+```
+
+- **동의 항목(scope)을 요청하지 않는다.** 저장하는 것은 제공자 + 제공자 회원번호뿐이다.
+  이름·이메일·프로필 사진은 받지도 저장하지도 않는다 (구글은 `openid` 만)
+- 클라이언트 시크릿은 Backend 환경변수에만 있다. Frontend 에는 client id 만 있다
+- `state` 는 Frontend 가 만들고 검증한다 (Backend 로 보내지 않는다)
+
+**요청**
+
+```json
+{
+  "code": "제공자가 돌려준 인가 코드",
+  "redirect_uri": "http://localhost:5173/auth/kakao/callback",
+  "agreed": false
+}
+```
+
+- `redirect_uri`: 인가 요청 때와 **같은 값**. 각 개발자 콘솔에 등록돼 있어야 한다
+- `agreed`: 이용약관·개인정보 처리방침에 동의하고 가입 화면에서 눌렀으면 `true`
+
+**응답 `200`**
+
+```json
+{ "token": "…", "account": "카카오 계정" }
+```
+
+- `token`: 이후 `Authorization: Bearer <token>`. 서버에는 SHA-256 해시만 저장. 기본 30일(`AUTH_TOKEN_DAYS`)
+- `account`: 화면에 보일 이름. 이름을 받지 않으므로 제공자 이름이다
+
+**처음 온 사용자**: `agreed: false` 이고 처음 보는 회원번호면 `409 SIGNUP_REQUIRED`.
+**제공자 동의 화면은 우리 약관 동의를 대신하지 않는다.** 응답 `detail.signup_ticket` 에
+확인한 회원번호를 서명한 **가입 확인증(10분)** 이 실려 온다. Frontend 는 가입 화면에서 동의를 받고
+아래 2-7b 로 보낸다 — 인가 코드는 한 번만 쓸 수 있어, 전에는 제공자 화면을 한 번 더 거쳐야 했다 (2026-11-03).
+
+### 2-7b. `POST /api/v1/auth/social-signup` — 처음 온 사람의 가입
+
+```json
+{ "ticket": "<detail.signup_ticket>", "agreed": true, "consent_version": "2026-11-03-draft" }
+```
+
+응답은 2-7 과 같다. 같은 확인증을 다시 보내도 계정은 하나다.
+`agreed` 는 이용약관 · 개인정보 수집 · 이용 · 만 14세 이상 보호자 · 교사 **세 가지 모두**에 동의했다는 뜻이다
+(화면이 항목마다 따로 받는다). `consent_version` 은 동의한 약관 판으로 `users.consent_version` 에 남긴다.
+2-7 에서 `agreed: true` 로 가입할 때도 같은 값을 보낸다 (2026-11-03).
+
+| 오류 | 언제 |
+|---|---|
+| `400 TERMS_REQUIRED` | `agreed` 가 false |
+| `400 SIGNUP_EXPIRED` | 10분이 지났거나 확인증이 틀림 → 제공자 버튼으로 다시 |
+
+### 2-8. `GET /api/v1/auth/me` — 로그인 확인
+
+`Authorization: Bearer <token>` 필요. 없거나 만료면 `401 UNAUTHORIZED`.
+
+```json
+{ "user_id": "…", "providers": ["kakao"] }
+```
+
+> **그림 · 작업 · 이야기 API 는 모두 로그인이 필요하다** (`Authorization: Bearer`, 없으면 `401 UNAUTHORIZED`).
+> 가입 없이는 쓸 수 없게 정했다 (pt_docs 03 F-ACC-03 · 04, 2026-11-03 코드 반영). 올린 것은 그 계정에 묶이고 다른 계정은 404 로 본다.
+
+**`DELETE /api/v1/auth/me` — 계정 탈퇴 (2026-11-03)**. `204`. 그 계정의 그림 · 잘라 낸 그림 · 미리보기 · 동작 영상 · 프레임 묶음 · 이야기(음성 · 영상 · 정지 그림) 파일, AI 분석 세션, ElevenLabs 보호자 목소리와 그 목소리로 만든 음성, 표의 줄(캐릭터 · 관절 보정 · 이야기 · 활동 · 작업 · 보호자 목소리 · 소셜 연결 · 토큰 · 계정)을 모두 지운다 — pt_docs 02 6장 「탈퇴하면 남는 것이 없어야 한다」. 되돌릴 수 없어 화면(S-13)이 한 번 묻고 부른다. 이 토큰도 지워져 다음 요청은 `401`. 바깥(파일 · 목소리 · AI)을 못 지우면 로그를 남기고 계속 지운다 (`app/services/account.py`).
+
+### 2-9. `GET /health`
+
+```json
+{ "status": "ok", "env": "local" }
+```
+
+### 2-10. `DELETE /api/v1/characters/{character_id}/original` — 원본 그림 지우기
+
+S-13 「원본 그림 보관」이 꺼져 있으면 Frontend 가 **아이가 그 그림을 떠날 때** 부른다
+(새 그림을 고름, 처음으로 돌아감, 탭을 닫음). 렌더에 원본이 필요하고 S-11 「새 이야기 만들기」가
+같은 그림을 다시 쓰므로 분석 직후에는 지우지 않는다.
+
+- 응답 `204`. 여러 번 불러도 된다. 없는 캐릭터는 `404 CHARACTER_NOT_FOUND`
+- 지우는 것: 업로드 파일, AI 세션(3-4 를 Backend 가 부른다)
+- 남기는 것: 관절, 이야기 문장 · 음성 · MP4
+- 지운 뒤 같은 그림으로 이야기를 만들면 MP4 없이 만든다 (`animation_url: null`). Frontend 는 들고 있는 그림을 캔버스로 움직인다
+
+### 2-11. `POST /api/v1/stories/{story_id}/activity` — 순서 맞추기 기록 (S-10)
+
+S-10 을 한 번 할 때마다 하나를 보낸다. 맞혀서 S-11 로 가면 `completed: true`,
+맞히기 전에 나가면 `completed: false`. 「다 했어요」를 한 번도 안 눌렀으면 보내지 않는다.
+같은 이야기를 S-11 「다시 보기」로 또 하면 기록이 하나 더 생긴다.
+
+**요청**
+
+```json
+{ "attempts": 2, "completed": true, "card_count": 4, "level": 2 }
+```
+
+| 필드 | 뜻 | 범위 |
+|---|---|---|
+| `attempts` | 「다 했어요」를 누른 횟수. 맞힌 마지막 한 번도 센다 | 1~100 |
+| `completed` | 맞히고 S-11 로 갔는지 | |
+| `card_count` | 놓은 문장 카드 수 (Level 1 은 2장) | 2~4 |
+| `level` | 그때의 지원 수준 (선택) | 1~3 |
+
+**응답 `201`** — 요청 필드 + `id`, `story_id`, `created_at`. 없는 이야기는 `404 STORY_NOT_FOUND`.
+
+`GET /api/v1/stories/{story_id}/activity` 는 그 이야기의 기록을 오래된 것부터 배열로 준다 (어른 화면용, 아직 쓰는 화면 없음).
+
+### 2-13. `GET /api/v1/forms` — 형태 목록 (2026-11-04, pt_docs 19)
+
+그림의 몸 구조. 화면이 「누구를 그렸어요?」(두 단계 버튼) · 관절 고치기(S-06)를 그릴 때 쓴다 — **관절 이름을 화면 코드에 적지 않는다.**
+원본은 AI 서버의 형태 정의(`drawtale-ai runtime/ai_server/forms/*.json`). Backend 가 받아 두고(10분), AI 가 꺼져 있으면 2족형만 준다.
+**준비된 형태만** 보낸다 — 화면은 받은 것만 버튼으로 보인다(준비 안 된 형태는 숨김).
+
+```json
+{ "forms": [
+  { "id": "biped", "label": "2족형", "group": "humanoid", "kid_label": "두 발로 서는 친구",
+    "examples": ["사람", "곰인형", "펭귄"], "view": "front",
+    "joints": [ { "name": "hip", "parent": "root", "label": "엉덩이" }, "… 15개" ],
+    "guide": ["점을 끌어서 몸에 맞게 옮겨 주세요"], "hero": { "fit": "height", "facing": "front" }, "ready": true },
+  { "id": "quadruped", "label": "4족형", "group": "nonhumanoid", "kid_label": "네 발로 걷는 친구",
+    "examples": ["강아지", "고양이", "공룡"], "view": "side",
+    "joints": [ { "name": "hip", "parent": "root", "label": "엉덩이" }, "… right_hip_b · left_foot_f · tail 등 18개" ],
+    "guide": ["엉덩이 → 어깨 → 목 → 뒷다리 → 앞다리 순서예요", "…"], "hero": { "fit": "width", "facing": "auto" }, "ready": true }
+] }
+```
+
+- `group`: `humanoid`(1단계 「두 발로 서는 친구」) · `nonhumanoid`(1단계 「다른 모습 친구」 → 2단계에서 형태별 버튼)
+- `joints[].parent`: 뼈를 이을 부모. `root` 는 보이지 않는 뿌리(엉덩이 자리)라 화면에 점으로 그리지 않는다
+- `hero.fit`: 장면(S-09)에 세울 때 키(`height`) / 몸길이(`width`) 기준. 4족형은 옆으로 길다
+- 4족형 이야기: 쪽 동작은 걷기 · 뛰기만 렌더하고 나머지는 가만히(멈춘 그림). 미리 만든 카드 이야기(사람 주인공 글)는 쓰지 않고 대본 AI 가 새로 쓴다
+
+### 2-14. `POST /api/v1/characters/{character_id}/turn` — 얼굴 방향 바꾸기 (2026-11-04)
+
+S-05 「얼굴이 반대쪽이에요」. 옆모습 형태(형태 정의 `hero.facing == "auto"`, 지금은 4족형)만.
+AI 는 머리 쪽을 몸이 굵은 쪽으로 추측해 꼬리가 굵은 그림(악어)에서 틀린다 — 그러면 목 · 어깨 · 꼬리 · 앞뒤 다리가 모두 뒤집힌다.
+같은 그림을 **머리 쪽만 지금과 반대로** 다시 분석한다 (지금 머리 쪽 = 목이 엉덩이보다 왼쪽이면 왼쪽).
+
+- 응답 `202` — 2-1 과 같은 `{ character_id, job_id, status }`. 화면은 2-1 처럼 Job 을 기다린 뒤 2-3 으로 다시 읽는다
+- 고친 관절 기록은 지운다 (`joints_corrected` → false). 미리보기 · 쪽 동작은 다시 만든다 (`preview_status` → `rendering`)
+- 에러: `409 CHARACTER_NOT_READY` (분석 전) · `422 FORM_HAS_NO_SIDE` (2족형) · `409 ORIGINAL_DELETED` (원본을 지운 뒤)
+- AI 에는 3장 analyze 에 `facing=left|right` 를 함께 보낸다 (없으면 AI 가 추측)
+
+### 2-15. `PATCH /api/v1/stories/{story_id}` — 책 제목 바꾸기 (2026-11-04)
+
+S-11 「다 했어요」의 「책 제목」 · S-12 책장 · S-13 제목 바꾸기. 전에는 고친 제목이 기기에만 있어 다른 기기 · 다시 로그인하면 처음 제목이었다.
+
+- 요청 `{ "title": "용감한 도토리" }` — 1~20자, 앞뒤 · 겹친 빈칸은 하나로. 빈 제목 · 21자 이상은 `422`
+- 응답 `200` — 2-6 과 같은 이야기. `title` 에 정한 제목, 긴 이야기면 `book.title` 도 그 제목
+- 2-6 응답의 `title` 은 정한 제목이 없으면 `null` — 화면이 `book.title` · 「{장소}에 간 날」을 쓴다
+- 에러: `404 STORY_NOT_FOUND` (없거나 남의 이야기)
+- DB: `stories.title` (nullable, 마이그레이션 `a6b7c8d9e0f1`)
+
+### 2-12. `/api/v1/me/voice` — 보호자 목소리 (나레이터 대신, 2026-11-02)
+
+보호자 모드. **로그인 필요** (`Authorization: Bearer`, 없으면 `401 UNAUTHORIZED`). 아이 목소리는 받지 않는다.
+녹음은 **서버에 저장하지 않는다** — 받은 그대로 ElevenLabs(Instant Voice Cloning, 미국)로 넘기고 목소리 id 와 동의 기록만 둔다 (표 `guardian_voices`, migration `b1c2d3e4f5a6`).
+
+| | 요청 | 응답 |
+|---|---|---|
+| `GET` | — | `200 {"registered", "available", "consent_version", "consented_at"}` — `available` 은 이 서버가 목소리를 받을 수 있는지(`TTS_PROVIDER=elevenlabs` + 키) |
+| `POST` | `multipart/form-data`: `audio`(1~3분 녹음, WAV 권장 · mp3 · mp4 · webm, 20MB 이하), `agree_collect` · `agree_transfer` · `own_voice`(모두 `true`), `consent_version`(동의한 안내문 판, 프론트 `S13Voice.tsx` `CONSENT_VERSION`) | `201` 위와 같은 모양. 다시 녹음하면 예전 목소리를 지우고 바꾼다 |
+| `DELETE` | — | `204`. ElevenLabs 목소리와 **그 목소리로 만든 이야기 음성 파일**(`audio_url` · 쪽 `audio_url`)을 함께 지운다. 동의 · 철회 시각은 남긴다 |
+
+오류: 동의가 하나라도 빠지면 `400 CONSENT_REQUIRED`(ElevenLabs 로 아무것도 보내지 않음), 형식 · 크기 `400 INVALID_AUDIO`, ElevenLabs 설정 없음 `503 VOICE_UNAVAILABLE`, ElevenLabs 실패 `502 VOICE_FAILED`.
+요금제마다 만들 수 있는 목소리 개수가 정해져 있다 — 가족마다 하나씩 쓰므로 배포 전에 확인한다.
+
+### 2-16. `/api/v1/me/guardian-pin` · `/api/v1/me/onboarded` — 보호자 비밀번호 · 보호자 소개 카드 (2026-11-06, pt_docs 20 3장)
+
+설정은 누구나 톱니로 연다. 아이가 바꾸면 안 되는 것(보호자 모드 · 사진 올리기 · 목소리 · 계정 · 제목 고치기 · 지우기 …)은 설정의 「보호자 칸」에 두고
+이 비밀번호로 연다. 아이 화면의 잠긴 보호자 기능(🔒)도 같은 비밀번호를 묻는다. **로그인 필요** (없으면 `401`).
+
+| | 요청 | 응답 |
+|---|---|---|
+| `PUT /me/guardian-pin` | `{"pin": "2580"}` — 숫자 4자리. 이미 있으면 `"current_pin"` 도 | `204`. 처음이면 그대로 만든다. 이미 있으면 `current_pin` 이 맞아야 바꾼다 — **잊었으면 다시 로그인한 뒤 10분 안**(그 토큰의 발급 시각)에는 `current_pin` 없이 새로 정한다 |
+| `POST /me/guardian-pin/check` | `{"pin": "2580"}` | `200 {"ok": true}` |
+| `POST /me/onboarded` | — | `204`. 보호자 소개 카드를 봤다(`users.onboarded_at`) — 다른 기기에서 다시 띄우지 않는다. 여러 번 불러도 된다 |
+
+- 2-8 `GET /auth/me` 응답에 `guardian_pin_set` · `onboarded` (bool)
+- 오류: 4자리 숫자가 아니면 `422`. 비밀번호가 없는데 확인 `409 PIN_NOT_SET`. 틀리면 `403 PIN_WRONG` + `detail.tries_left`(남은 횟수).
+  **연달아 다섯 번 틀리면 5분 동안** `429 PIN_LOCKED` + `detail.retry_after` · `Retry-After` 초 (그동안은 맞는 비밀번호도 받지 않는다). 맞으면 센 횟수를 지운다.
+  이미 있는데 `current_pin` 도 없고 로그인한 지 10분이 지났으면 `403 PIN_REQUIRED`
+- 비밀번호는 PBKDF2-SHA256(계정마다 소금) 해시로만 둔다. DB: `users.guardian_pin_hash` · `guardian_pin_failures` · `guardian_pin_locked_until` · `onboarded_at` (마이그레이션 `b7c8d9e0f1a2`)
+
+---
+
+## 3. Internal API (Backend → AI, A1 담당)
+
+> **2026-09-28 갱신:** A1이 올린 AI 서버(`drawtale-ai` `runtime/`) 기준으로 analyze 형식을 맞췄다.
+> Backend가 AI 응답을 계약 형식으로 변환하므로, 아래 **"현재"** 형식이면 연결된다. **"필요"** 항목은 A1이 추가해야 한다.
+
+- AI 서버는 외부에 공개하지 않는다. Backend만 `AI_SERVICE_URL`(운영: `http://ai:8001`)로 호출한다.
+- **파일 전달: 당분간 파일 직접 전송(multipart)**. Azure Blob을 붙일 때 URL 방식으로 바꿀지 다시 정한다.
+- 에러: HTTP 200 + `"success": false` + `"message": "CODE: 설명"` 형식을 허용한다. Backend가 `CODE`를 읽어 사용자용 한국어 메시지로 바꾼다. (설명 문구는 사용자에게 보여주지 않는다)
+
+### 3-1. `GET /internal/v1/health`
+
+```json
+{ "status": "ok", "model_loaded": true, "model_version": "meta-animated-drawings-pretrained", "pipeline_version": "0.1.0" }
+```
+
+- 현재: `status`, `model_loaded`(고정값 `false`), `runtime`
+- 필요: `model_loaded`를 실제 TorchServe 상태로, `model_version` · `pipeline_version` 추가
+
+### 3-2. `POST /internal/v1/analyze`
+
+**요청** — `multipart/form-data`, 필드 `file` (그림 파일)
+
+**응답 `200`**
+
+```json
+{
+  "success": true,
+  "bbox": { "left": 80, "top": 60, "right": 320, "bottom": 540 },
+  "joints": [ { "name": "hip", "x": 200, "y": 324, "score": 0.91 }, "... 15개, 1-1 순서" ],
+  "confidence": 0.998,
+  "mask": { "width": 240, "height": 480 },
+  "message": "Analysis complete",
+  "model_version": "meta-animated-drawings-pretrained",
+  "pipeline_version": "0.1.0",
+  "coordinate_space": "image_px",
+  "processing_time_ms": 3120
+}
+```
+
+| 항목 | 현재 | 필요 |
+|---|---|---|
+| 관절 이름 · 순서 | ✅ 1-1과 같음 | - |
+| bbox | ✅ `left/top/right/bottom` (Backend가 `x/y/width/height`로 변환) | - |
+| **좌표 기준** | ❌ 최대 1000px로 줄인 이미지 기준 | **원본 이미지 px로 변환** |
+| 마스크 | ❌ 크기만 반환, 이미지는 버림 | **마스크 이미지 저장** (render에서 사용) |
+| 메타데이터 4개 | ❌ 없음 (Backend가 `unknown`으로 채움) | `model_version`, `pipeline_version`, `coordinate_space`, `processing_time_ms` |
+| 관절 `score` · 검출 `confidence` | ✅ drawtale-ai `feat/joint-confidence` (2026-10-02). 없으면 Backend 가 `null` | - |
+
+**실패 응답 `200`**
+
+```json
+{ "success": false, "message": "NO_CHARACTER_DETECTED: No drawn humanoid detected" }
+```
+
+| AI code | Backend Job error code | 사용자 메시지 |
+|---|---|---|
+| `NO_CHARACTER_DETECTED`, `INVALID_BBOX` | `NO_CHARACTER_DETECTED` | 그림에서 사람 모양 캐릭터를 찾지 못했어요. |
+| `MULTIPLE_CHARACTERS` | `MULTIPLE_CHARACTERS` | 그림에 사람이 여러 명 있어요. 한 명만 그린 그림으로 다시 해 주세요. |
+| `LOW_CONFIDENCE` | `LOW_CONFIDENCE` | 그림에서 사람 모양을 알아보기 어려워요. 사람을 크게 그려서 다시 찍어 주세요. |
+| `INVALID_IMAGE` | `INVALID_IMAGE` | 이미지를 읽을 수 없어요. |
+| `MODEL_UNAVAILABLE` | `AI_UNAVAILABLE` | AI 서버가 준비되지 않았어요. |
+| 그 외 / code 없음 | `AI_ERROR` | 그림 분석 중 오류가 발생했어요. |
+
+걸러내는 기준(AI 쪽): `MULTIPLE_CHARACTERS` 는 두 번째 검출 점수 ≥ 0.8 이고 첫 상자와 50% 미만 겹칠 때,
+`LOW_CONFIDENCE` 는 검출 점수 < 0.3 이거나 관절 점수 평균 < 0.35 일 때. 실제 그림으로 잰 값은 drawtale-ai README 「점수와 걸러내기」.
+
+### 3-3. `POST /internal/v1/render` ✅ 구현 완료 (2026-09-29)
+
+보정된 관절로 애니메이션 MP4를 만든다. **analyze가 준 `request_id`가 필요하다.**
+AI 서버가 analyze 때 원본 그림과 마스크를 보관해 두고, render에서 재사용한다.
+
+**요청** — `multipart/form-data`
+
+| 필드 | 값 |
+|---|---|
+| `request_id` | analyze 응답의 `request_id` |
+| `joints` | 관절 15개 JSON 배열 (사용자 보정 반영) |
+| `motion` | `wave_hello` · `jumping` · `jumping_jacks` · `dab` · `zombie` · **`wave_hello_gentle` · `jumping_gentle`** (Backend 는 순화 동작만 쓴다, 아래) |
+| `max_frames` | (선택, 2026-10-08) 프레임 상한. 동작 전체에서 일정 간격으로 골라 그린다 — 속도는 그대로, 끊김만 는다. AI `.env` 의 `RENDER_MAX_FRAMES` 와 둘 다 있으면 작은 쪽. Backend 는 S-05 미리보기에 150 을 보낸다 |
+
+**성공 응답 `200`** — MP4 파일 본문 (`Content-Type: video/mp4`)
+
+| 헤더 | 값 |
+|---|---|
+| `X-Processing-Time-Ms` | 렌더링 소요 시간 |
+| `X-Model-Version` | 모델 버전 |
+| `X-Pipeline-Version` | 파이프라인 버전 |
+
+**실패 응답 `200`** — analyze와 같은 JSON 형식
+
+```json
+{ "success": false, "message": "SESSION_NOT_FOUND: request_id not found: ..." }
+```
+
+| AI code | Backend 처리 |
+|---|---|
+| `SESSION_NOT_FOUND` | 분석 결과가 만료됨 (AI 서버 재시작 등) |
+| `UNKNOWN_MOTION` | 지원하지 않는 동작 |
+| `INVALID_JOINTS` | 관절 15개가 아니거나 형식 오류 |
+| `MASK_NOT_FOUND` | 마스크 파일 없음 |
+| `RENDER_FAILED`, `ENCODING_FAILED` | 렌더링/변환 실패 |
+
+**행동 → 동작 (Backend `motion_for`)**
+
+| 행동 문구에 들어 있으면 | motion |
+|---|---|
+| 달려 · 뛰 · 점프 · 춤 · 운동 | `jumping_gentle` |
+| 그 밖 전부 (물어 · 도와 · 불렀 · 인사 · 사과 · 숨 · 기다 …) | `wave_hello_gentle` |
+
+순화 동작은 팔 회전을 줄이고 팔꿈치를 거의 편 판이다. 팔을 몸통에 붙여 그린 그림에서 팔이
+뭉개지지 않게 하려는 것이다 (drawtale-ai README 「순화 동작」). **drawtale-ai `feat/gentle-motions` 가
+먼저 합쳐져야 한다** — 없는 motion 이름을 보내면 AI 가 `UNKNOWN_MOTION` 을 돌려준다.
+
+**동작 특성**
+
+- 소요 시간: 약 35~40초 (839프레임 기준)
+- 결과 크기: 약 0.6~1.7MB
+- 관절이 캐릭터 영역 밖이면 자동으로 영역 안으로 맞춘다
+- Backend는 받은 MP4를 저장하고 `animation_url`로 제공한다
+
+### 3-4. `DELETE /internal/v1/sessions/{request_id}`
+
+AI 서버에 남은 임시 파일(원본, 마스크)을 정리한다. 응답은 `{"success": true}`.
+
+## 4. 합의 필요 항목 정리
+
+| # | 항목 | 현재 초안 | 누구와 |
+|---|---|---|---|
+| 1 | 관절 15개 이름·순서 | Meta skeleton − root — ✅ A1 코드와 일치 | A1 |
+| 2 | 좌표 기준 | 원본 이미지 px, 왼쪽 위 원점 | A1, Frontend |
+| 3 | 이야기 4단계 값 형식 | 자유 문자열 50자 | Frontend |
+| 4 | polling 간격 | 1~2초 | Frontend |
+| 5 | 파일 전달 방식 | ✅ 파일 직접 전송 + request_id 세션, Blob 연결 시 재검토 | 완료 |
+| 6 | motion 목록 | ✅ wave_hello, jumping, jumping_jacks, dab, zombie + 순화 동작 wave_hello_gentle, jumping_gentle (drawtale-ai `feat/gentle-motions`). Backend 는 순화 동작만 쓴다 | A1 |
+| 7 | 애니메이션 형식 | ✅ MP4 확정 | 완료 |
+| 8 | AI 에러 code 목록 | 3-2 표 (A1 코드 기준) | A1 |
+| 9 | 로그인/세션 | ~~선택 사항~~ → **필수** (2026-11-03). 비회원 시작을 뺐고, 캐릭터 · 이야기는 계정에 묶인다 | 전원 |
