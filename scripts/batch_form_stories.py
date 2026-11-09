@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from pathlib import Path
 
@@ -114,22 +115,37 @@ def run(form: str, limit: int | None, budget: float) -> None:
     B.log(f"끝 · 저장 {ok} · 다시/실패 {bad} · 이번 ${spent:.2f} (한 편 ${spent / n:.3f}) · 누적 ${state['spent']:.2f}")
 
 
+# 주인공(나)이 손 · 팔을 쓰는 글 — 사람 몸짓이라 4족형 · 사슬형에 맞지 않는다. 「손을 흔들어 웃게 했어요」 카드를 그대로
+# 옮긴 것(4족 27 · 사슬 12편). approved 로 넣지 않고 draft 로 둬 그때 대본 AI 가 새로 쓴다
+HERO_HAND = re.compile(r"나는[^.!?]{0,30}(손을 흔들|손으로|손에 들|손뼉|두 손|팔을)|(내 손|내 두 손|내 팔)")
+
+
+def page_text(p: dict) -> str:
+    return p["text"] if "text" in p else " ".join(line["text"] for line in p["lines"])
+
+
 def load_db(form: str, approve_clean: bool) -> None:
-    """jsonl → card_stories 표. 검사(형식 · 카드 · 내용)를 통과한 것만 jsonl 에 있으니 approve_clean 이면 바로 approved."""
+    """jsonl → card_stories 표. 검사(형식 · 카드 · 내용)를 통과한 것만 jsonl 에 있으니 approve_clean 이면 바로 approved.
+    단 주인공이 손 · 팔을 쓰는 글(HERO_HAND)은 draft"""
     from app.db.session import SessionLocal
     from app.models.card_story import CardStory
 
     rows = load(form)
+    counts: dict[str, int] = {}
     with SessionLocal() as db:
         for r in rows.values():
             key = {k: r[k] for k in ("place", "problem", "action", "result", "length", "voice_mode")}
             row = db.query(CardStory).filter_by(**key, form=form).one_or_none() or CardStory(**key, form=form)
             row.payload, row.model, row.prompt_version = r["payload"], r["model"], r["prompt_version"]
-            row.status = "approved" if approve_clean else "draft"
-            row.reviewed_by = "auto-check" if approve_clean else None
+            hand = form != "biped" and HERO_HAND.search(" ".join(page_text(p) for p in r["payload"]["book"]["pages"]))
+            ok = approve_clean and not hand
+            row.status = "approved" if ok else "draft"
+            row.reviewed_by = "auto-check" if ok else None
+            row.note = "주인공이 손 · 팔을 씀 — 이 형태에 맞지 않음" if hand else None
+            counts[row.status] = counts.get(row.status, 0) + 1
             db.add(row)
         db.commit()
-    B.log(f"{form}: {len(rows)}편을 {'approved' if approve_clean else 'draft'} 로 넣었습니다")
+    B.log(f"{form}: {len(rows)}편을 넣었습니다 {counts}")
 
 
 if __name__ == "__main__":
