@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pin", help="보호자 비밀번호(숫자 4자리)를 이걸로 정해 둔다")
     ap.add_argument("--onboarded", action="store_true", help="보호자 소개 카드를 본 것으로")
     ap.add_argument("--fresh", action="store_true", help="보호자 비밀번호 · 소개 카드를 처음 상태로")
+    ap.add_argument("--no-age", action="store_true", help="본인인증(나이 확인) 안 한 계정으로 (예전 계정 시험)")
     ap.add_argument("--front", default="http://localhost:5173", help="프론트 개발 서버 주소")
     args = ap.parse_args(argv)
 
@@ -63,6 +64,12 @@ def main(argv: list[str] | None = None) -> int:
             user.guardian_pin_locked_until = None
         if args.onboarded:
             user.onboarded_at = user.onboarded_at or utcnow()
+        # 시험 계정은 본인인증을 한 것으로 둔다 (포트원 창 없이 화면을 보려고). --no-age 면 안 한 계정
+        if args.no_age:
+            user.age_verified_at = user.age_verification_method = user.age_verification_id = None
+        elif user.age_verified_at is None:
+            user.age_verified_at = utcnow()
+            user.age_verification_method = "dev-login"
         token = issue_token(db, user)
         db.commit()
         state = (

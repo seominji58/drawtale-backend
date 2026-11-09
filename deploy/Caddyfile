@@ -45,8 +45,9 @@ www.drawtale.kr {
 	header /assets/* Cache-Control "public, max-age=31536000, immutable"
 
 	# 화면 보안 헤더 (2026-11-02). 프론트 public/staticwebapp.config.json 의 globalHeaders 와 같게 둔다
+	# 포트원 본인인증(2026-11-09): SDK(cdn.portone.io) · KG이니시스 인증 창(frame · form)
 	header {
-		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.portone.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; worker-src 'self' blob:; frame-src https://*.portone.io https://*.inicis.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://*.portone.io https://*.inicis.com; object-src 'none'"
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY

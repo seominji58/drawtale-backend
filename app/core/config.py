@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,6 +81,18 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     auth_token_days: int = 30
 
+    # ---- 보호자 나이 확인 (본인인증, 2026-11-09) ----
+    # 포트원 V2 + KG이니시스 본인인증. 가입할 때 한 번, 만 14세 이상이면 통과 (약관 제4조 「만 14세 이상의 보호자 또는 교사」).
+    # 프론트는 상점 아이디 · 채널 키(공개 값)로 인증 창을 열고, 서버는 이 API Secret 으로 결과를 직접 조회한다.
+    # 이름 · 전화번호 · 생년월일은 저장하지 않는다 (app/services/identity.py)
+    portone_api_secret: str = ""
+    portone_store_id: str = ""
+    portone_api_base: str = "https://api.portone.io"
+    age_verification_min_age: int = 14
+    # 가입에 본인인증을 요구하는지. 비우면 PORTONE_API_SECRET 이 있거나 운영(APP_ENV=prod)이면 요구한다 , 
+    # 로컬에서 키 없이 화면을 시험할 때는 묻지 않고, 운영에서 키를 빠뜨리면 가입이 막힌다(조용히 건너뛰지 않게)
+    age_verification_required: bool | None = None
+
     cors_origins: str = "http://localhost:5173"
 
     # ---- 보안 (2026-11-02) ----
@@ -102,6 +115,18 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in ("prod", "production")
+
+    @field_validator("age_verification_required", "enable_docs", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v: object) -> object:
+        # .env 에 `AGE_VERIFICATION_REQUIRED=` 처럼 비워 두면 bool 로 못 읽어 서버가 켜지지 않았다
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @property
+    def age_check_required(self) -> bool:
+        if self.age_verification_required is not None:
+            return self.age_verification_required
+        return bool(self.portone_api_secret) or self.is_production
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -10,17 +10,21 @@ from app.core.auth import (
     issue_token,
     read_signup_ticket,
 )
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.session import get_db
 from app.models import AuthToken, SocialAccount, User
 from app.models.mixins import utcnow
 from app.schemas.auth import (
+    AgeCheckRequest,
+    AgeCheckResponse,
     AuthResponse,
     MeResponse,
     SocialLoginRequest,
     SocialSignupRequest,
 )
 from app.schemas.common import ErrorResponse
+from app.services import identity
 from app.services.social import fetch_member_id, get_provider
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -63,9 +67,11 @@ def _account(db: Session, provider: str, member_id: str) -> SocialAccount | None
 
 
 def _create_account(
-    db: Session, provider: str, member_id: str, consent_version: str | None
+    db: Session, provider: str, member_id: str, consent_version: str | None, age_ticket: str | None
 ) -> SocialAccount:
     user = User(terms_agreed_at=utcnow(), consent_version=consent_version)
+    # 본인인증(나이 확인)을 마쳤는지 먼저 본다, 계정이 생기기 전에 (2026-11-09)
+    identity.require_for_new_account(db, user, age_ticket)
     db.add(user)
     db.flush()
     account = SocialAccount(user_id=user.id, provider=provider, provider_user_id=member_id)
@@ -97,11 +103,45 @@ def social_signup(
 
     # 확인증으로 두 번 눌러도 계정은 하나다
     account = _account(db, p.name, member_id) or _create_account(
-        db, p.name, member_id, body.consent_version
+        db, p.name, member_id, body.consent_version, body.age_ticket
     )
     token = issue_token(db, account.user)
     db.commit()
     return AuthResponse(token=token, account=f"{p.label} 계정")
+
+
+@router.post(
+    "/age-check",
+    response_model=AgeCheckResponse,
+    responses=_ERRORS,
+    summary="가입 전 보호자 나이 확인, 포트원 본인인증 결과를 조회해 나이 확인증을 준다 (2026-11-09)",
+)
+def age_check(request: Request, body: AgeCheckRequest) -> AgeCheckResponse:
+    """만 14세 이상이면 10분짜리 확인증. 이름 · 생년월일 같은 것은 돌려주지도 남기지도 않는다.
+    "/{provider}" 보다 먼저 둔다 (아니면 provider="age-check" 로 잡힌다)"""
+
+    rate_limit.check("login", request)
+    identity.check_age(body.identity_verification_id)
+    return AgeCheckResponse(age_ticket=identity.issue_age_ticket(body.identity_verification_id))
+
+
+@router.post(
+    "/me/age-check",
+    response_model=MeResponse,
+    responses={**_ERRORS, 401: {"model": ErrorResponse}},
+    summary="예전에 가입한 계정의 보호자 나이 확인 (2026-11-09)",
+)
+def my_age_check(
+    request: Request,
+    body: AgeCheckRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> MeResponse:
+    rate_limit.check("login", request)
+    identity.check_age(body.identity_verification_id)
+    identity.record(db, user, body.identity_verification_id)
+    db.commit()
+    return me(user)
 
 
 @router.post(
@@ -129,7 +169,7 @@ def social_login(
                 409,
                 detail={"signup_ticket": issue_signup_ticket(p.name, member_id)},
             )
-        account = _create_account(db, p.name, member_id, body.consent_version)
+        account = _create_account(db, p.name, member_id, body.consent_version, body.age_ticket)
 
     token = issue_token(db, account.user)
     db.commit()
@@ -148,6 +188,7 @@ def me(user: User = Depends(current_user)) -> MeResponse:
         providers=[a.provider for a in user.social_accounts],
         guardian_pin_set=user.guardian_pin_hash is not None,
         onboarded=user.onboarded_at is not None,
+        age_verified=user.age_verified_at is not None or not get_settings().age_check_required,
     )
 
 

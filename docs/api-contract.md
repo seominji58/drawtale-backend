@@ -590,6 +590,27 @@ S-11 「다 했어요」의 「책 제목」 · S-12 책장 · S-13 제목 바�
   이미 있는데 `current_pin` 도 없고 로그인한 지 10분이 지났으면 `403 PIN_REQUIRED`
 - 비밀번호는 PBKDF2-SHA256(계정마다 소금) 해시로만 둔다. DB: `users.guardian_pin_hash` · `guardian_pin_failures` · `guardian_pin_locked_until` · `onboarded_at` (마이그레이션 `b7c8d9e0f1a2`)
 
+### 2-17. `/api/v1/auth/age-check` · `/api/v1/auth/me/age-check`, 보호자 나이 확인 (본인인증, 2026-11-09)
+
+가입할 때 한 번, 휴대폰 본인인증(포트원 V2 + KG이니시스)으로 **만 14세 이상**인지 본다 (약관 제4조 「만 14세 이상의 보호자 또는 교사」).
+프론트는 포트원 브라우저 SDK `requestIdentityVerification({storeId, identityVerificationId, channelKey, redirectUrl})` 로 인증 창을 열고,
+끝나면 **인증 건 ID 만** 서버에 넘긴다. 서버가 `GET https://api.portone.io/identity-verifications/{id}` (`Authorization: PortOne {PORTONE_API_SECRET}`)로
+직접 조회한다. `status == "VERIFIED"`, 인증한 지 30분 안, `verifiedCustomer.birthDate` 로 셈한 만 나이(한국 날짜)가 14 이상이어야 통과.
+
+| | 요청 | 응답 |
+|---|---|---|
+| `POST /auth/age-check` (로그인 없이) | `{"identity_verification_id": "idv-…"}` | `200 {"age_ticket": "…"}`, 10분짜리 서명 확인증 |
+| 2-7 `POST /auth/{provider}` (`agreed: true`) · `POST /auth/social-signup` | 기존 본문 + `"age_ticket"` | 새 계정을 만들 때만 본다. 이미 있는 계정의 로그인은 그대로 |
+| `POST /auth/me/age-check` (**로그인 필요**) | `{"identity_verification_id": "idv-…"}` | `200` 2-8 `GET /auth/me` 와 같은 본문. 예전에 가입한 계정이 한 번 할 때 |
+
+- 2-8 `GET /auth/me` 응답에 `age_verified` (bool). 본인인증을 요구하지 않는 환경이면 늘 `true`. `false` 면 프론트가 다른 화면보다 먼저 묻는다
+- 오류: 끝나지 않음 · 없는 건 · 생년월일 없음 `400 AGE_CHECK_FAILED`, 30분 지남 `400 AGE_CHECK_EXPIRED`, 만 14세 미만 `403 AGE_TOO_YOUNG`,
+  새 계정인데 확인증이 없거나 틀림 · 10분 지남 `400 AGE_CHECK_REQUIRED`, 같은 인증 건을 다른 계정에 `409 AGE_CHECK_USED`,
+  키 없음 · 포트원이 키를 거절 `503 AGE_CHECK_NOT_CONFIGURED`, 포트원에 닿지 않음 `502 AGE_CHECK_UNAVAILABLE`
+- **남기는 것**: `users.age_verified_at` · `age_verification_method`(`portone-inicis`) · `age_verification_id`(unique, 한 건을 여러 계정에 못 쓰게). 이름 · 전화번호 · 생년월일 · CI · DI 는 나이를 셈한 뒤 버린다 (마이그레이션 `c8d9e0f1a2b3`)
+- 설정: `PORTONE_API_SECRET` · `PORTONE_STORE_ID`, `AGE_VERIFICATION_REQUIRED`(비우면 키가 있거나 `APP_ENV=prod` 일 때 요구, 로컬에서 키 없이 화면 시험할 때는 묻지 않는다). 프론트는 `VITE_PORTONE_STORE_ID` · `VITE_PORTONE_IDV_CHANNEL_KEY`
+- 배포 CSP: `script-src https://cdn.portone.io`, `frame-src` · `form-action` 에 `https://*.portone.io https://*.inicis.com` (`deploy/Caddyfile`, 프론트 `staticwebapp.config.json`)
+
 ---
 
 ## 3. Internal API (Backend → AI, A1 담당)

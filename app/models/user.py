@@ -33,6 +33,12 @@ class User(IdMixin, TimestampMixin, Base):
     )
     # 보호자 소개 카드를 본 때 — 다른 기기에서 다시 뜨지 않게
     onboarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # 보호자 나이 확인 (본인인증, 2026-11-09). 확인한 때 · 방법 이름 · 포트원 인증 건 번호만 남긴다 , 
+    # 이름 · 전화번호 · 생년월일 · CI 는 받자마자 버린다 (pt_docs policy 아동-개인정보-AI안전 3-3 「어떻게 확인했는지, 방법 이름만」).
+    # 인증 건 번호는 한 건을 여러 계정에 쓰지 못하게 하려고 둔다 (unique)
+    age_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    age_verification_method: Mapped[str | None] = mapped_column(String(40), default=None)
+    age_verification_id: Mapped[str | None] = mapped_column(String(100), default=None, unique=True)
 
     social_accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="user")
 
