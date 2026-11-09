@@ -1042,7 +1042,9 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     else make_page_audio(story, storage, book)
                 )
                 _stop_if_cancelled(job_id)
-                wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}, stop)
+                # 왼쪽 걸음(사람형)도 기다린다 — 미리 렌더가 아직이면 그 동작을 건너뛰어 왼쪽으로 가는 쪽에 빠졌다 (11/9)
+                wait_for_motion_clips(db, character, ({PAGE_MOTIONS.get(p.action) for p in book.pages} - {None})
+                                      | left_motions(character, book), stop)
                 _stop_if_cancelled(job_id)
                 sprites: set[str] = set()   # 투명 프레임 묶음까지 있는 동작
                 clips = make_page_clips(story, character, storage, book, sprites)
@@ -1060,7 +1062,8 @@ def run_story_job(job_id: uuid.UUID) -> None:
                         page["sprite_frames"], page["sprite_box"] = meta["frames"], meta["box"]
                         # 왼쪽으로 옮겨 가는 쪽에 쓸 왼쪽 걸음 (사람형 걷기 · 뛰기)
                         left = clips.get(f"{PAGE_MOTIONS.get(page['action'])}{LEFT_SUFFIX}")
-                        left_meta = left and f"{PAGE_MOTIONS.get(page['action'])}{LEFT_SUFFIX}" in sprites                             and read_sprite_meta(storage, left)
+                        left_meta = (left and f"{PAGE_MOTIONS.get(page['action'])}{LEFT_SUFFIX}" in sprites
+                                     and read_sprite_meta(storage, left))
                         if left_meta:
                             page["sprite_left_blob_path"] = sprite_path_for(left)
                             page["sprite_left_frames"], page["sprite_left_box"] = left_meta["frames"], left_meta["box"]
