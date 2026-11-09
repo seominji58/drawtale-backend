@@ -47,8 +47,6 @@ def book_response(book: dict | None, storage) -> dict | None:
             # 바탕이 투명한 프레임 묶음 (S-09 장면 층, 2026-11-03).
             # 정사각 칸 · 가로 8칸씩. 없으면 null
             "sprite_url": storage.url(p.get("sprite_blob_path")),
-            # 사람형 걷기 · 뛰기의 왼쪽 걸음 (왼쪽으로 옮겨 가는 쪽). 없으면 null
-            "sprite_left_url": storage.url(p.get("sprite_left_blob_path")),
         }
         for p in book["pages"]
     ]

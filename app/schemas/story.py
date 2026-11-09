@@ -170,13 +170,6 @@ class BookPage(BaseModel):
         default=None,
         description="첫 프레임에서 그림이 차지하는 자리 [왼, 위, 오른, 아래] — 칸 대비 0~1. 발끝 맞추기 · 크기 맞추기에 쓴다",
     )
-    sprite_left_url: str | None = Field(
-        default=None,
-        description="사람형 걷기 · 뛰기의 왼쪽 걸음 묶음 (sprite_url 은 오른쪽으로 내딛는다, 11/9). 왼쪽으로 옮겨 가는 쪽에 쓴다 — "
-        "그림을 좌우로 뒤집지 않으려고. 사람형 걷기 · 뛰기가 아니거나 예전 이야기면 없다",
-    )
-    sprite_left_frames: int | None = Field(default=None, description="sprite_left_url 의 장 수")
-    sprite_left_box: list[float] | None = Field(default=None, description="sprite_left_url 첫 장의 그림 자리 [왼, 위, 오른, 아래] 0~1")
     scene: BookScene | None = Field(
         default=None, description="대본이 정한 장면 계획. 저장해 둔 카드 이야기 · 예전 이야기는 없을 수 있다"
     )
