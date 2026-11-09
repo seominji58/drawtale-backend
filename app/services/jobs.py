@@ -279,17 +279,18 @@ def copy_clip(storage, src: str, dst: str) -> tuple[str, bool]:
         return saved, False
 
 
-def render_clip(character: Character, motion: str) -> RenderResult:
+def render_clip(character: Character, motion: str, joints: list[dict] | None = None) -> RenderResult:
     """짧은 동작 영상 (미리보기 · 쪽 동작) + 투명 프레임 묶음.
 
-    동작 전체에서 PREVIEW_MAX_FRAMES 만 골라 그린다."""
+    동작 전체에서 PREVIEW_MAX_FRAMES 만 골라 그린다. joints 를 주면 그것으로 (여러 동작을 동시에 렌더할 때
+    스레드에서 DB 관계(corrections)를 읽지 않게 본 스레드에서 미리 읽어 넘긴다)."""
 
     ai = get_ai_client((character.image_width, character.image_height))
     result = render_with_fallback(
         ai,
         RenderRequest(
             request_id=character.ai_request_id,
-            joints=[Joint.model_validate(j) for j in current_joints(character)],
+            joints=[Joint.model_validate(j) for j in (joints if joints is not None else current_joints(character))],
             motion=motion,
             max_frames=PREVIEW_MAX_FRAMES,
         ),
@@ -539,20 +540,33 @@ def _read(storage, path: str) -> bytes | None:
         return None
 
 
-def cached_page_audio(story: Story, storage, book: Book, key: str) -> list[str | None]:
-    """긴 저장본 이야기의 쪽 음성. 만들어 둔 것이 있으면 이 이야기 폴더로 복사하고, 없으면 만들어서 둔다."""
+def cached_page_audio(story: Story, storage, book: Book, key: str, cast_out: dict | None = None) -> list[str | None]:
+    """긴 저장본 이야기의 쪽 음성. 만들어 둔 것이 있으면 이 이야기 폴더로 복사하고, 없으면 만들어서 둔다.
+
+    cast_out 을 주면 목소리 배정을 story.voice_cast 대신 거기에 담는다 (쪽 동작 렌더와 동시에 다른 스레드에서 돌 때,
+    DB 객체를 그 스레드에서 고치지 않게, run_story_job 이 끝난 뒤 넣는다)"""
 
     cast = _read(storage, f"{key}/cast.json")
     pages = [_read(storage, f"{key}/page{p.page:02d}.mp3") for p in book.pages]
     if cast is not None and all(pages):
         log.info("story %s: 만들어 둔 음성을 다시 씁니다 (%s)", story.id, key)
-        story.voice_cast = json.loads(cast) or None
+        voices = json.loads(cast) or None
+        if cast_out is not None:
+            cast_out["voices"] = voices
+        else:
+            story.voice_cast = voices
         return [storage.save(f"results/{story.id}/page{p.page:02d}.mp3", a) for p, a in zip(book.pages, pages, strict=True)]
-    paths = make_page_audio(story, storage, book)
-    if all(paths):  # 한 쪽이라도 실패했으면 두지 않는다 — 다음에 다시 만든다
+    out: dict = {}
+    paths = make_page_audio(story, storage, book, out)
+    voices = out.get("voices")
+    if cast_out is not None:
+        cast_out["voices"] = voices
+    elif voices is not None:
+        story.voice_cast = voices
+    if all(paths):  # 한 쪽이라도 실패했으면 두지 않는다, 다음에 다시 만든다
         for p, path in zip(book.pages, paths, strict=True):
             storage.save(f"{key}/page{p.page:02d}.mp3", storage.read(path))
-        storage.save(f"{key}/cast.json", json.dumps(story.voice_cast or {}, ensure_ascii=False).encode())
+        storage.save(f"{key}/cast.json", json.dumps(voices or {}, ensure_ascii=False).encode())
     return paths
 
 
@@ -732,7 +746,7 @@ def _tts_retry(make):  # noqa: ANN001
     return None
 
 
-def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
+def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = None) -> list[str | None]:
     """쪽마다 MP3. 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다 (음성 비용이 늘지 않는다).
 
     캐릭터 목소리 판이고 ElevenLabs 면 대사가 있는 쪽은 인물 목소리로 읽는다. 인물 → 목소리는
@@ -749,6 +763,10 @@ def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
     speakers = [s for p in book.pages for s, _, _ in p.lines if s != NARRATOR]
     if story.voice_mode == VoiceMode.characters and speakers and isinstance(tts, ElevenLabsSpeech):
         voices = cast_voices(book.cast, story.protagonist_voice, tts.voice_id, speakers)
+    # 목소리 배정: cast_out 이 있으면 거기에 (다른 스레드에서 돌 때 DB 객체를 고치지 않게), 없으면 story 에 바로
+    if cast_out is not None:
+        cast_out["voices"] = voices
+    elif voices is not None:
         story.voice_cast = voices
 
     def one(page) -> str | None:
@@ -766,48 +784,105 @@ def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
         return list(ex.map(one, book.pages))
 
 
+# 이야기를 만들 때 새로 렌더할 동작(미리 렌더하지 않은 것 · 예전 걷기 다시 렌더)을 동시에 몇 개까지 (2026-11-09 실측: 셋을 차례로
+# 11.7초 → 동시에 7.6초, 로컬 AI). 이야기 하나에 새 동작은 많아야 page_motions.NEW_PER_STORY(3) 개
+RENDER_WORKERS = 3
+
+
+def remember_clips(character_id: uuid.UUID, before: dict | None, new: dict[str, str]) -> bool:
+    """이야기를 만들며 새로 렌더한 동작을 캐릭터 쪽(motion_clips)에도 둔다, 같은 캐릭터로 다시 만드는 이야기는 복사만 (2026-11-09
+    사용자 「재생성 이야기 시간 단축」). 전에는 이야기 폴더에만 두어 다시 만들 때마다 같은 동작을 또 렌더했다.
+
+    따로 세션을 열어 행을 잠그고 쓴다. 이렇게 두지 않는 때: 미리 렌더가 아직 돌고 있음(PENDING 이 남음 · 막 시작해 {}), 그사이
+    관절을 고쳐 목록이 바뀜, 원본을 지움. 미리 렌더(_store_previews)는 렌더 사이 목록이 바뀌면 관절이 바뀐 줄 알고 자기 결과를
+    지우기 때문이다. 관절을 고치면 start_previews 가 이 목록의 파일을 함께 지운다"""
+
+    try:
+        with db_session.SessionLocal() as s:
+            c = s.get(Character, character_id, with_for_update=True)
+            if c is None or not can_remember(c.motion_clips, before, c.original_deleted_at is not None):
+                return False
+            c.motion_clips = {**(c.motion_clips or {}), **new}
+            s.commit()
+            return True
+    except Exception:  # noqa: BLE001 시간을 줄이려는 덤이라 실패해도 이야기는 그대로 (다음 이야기가 다시 렌더할 뿐)
+        log.warning("새로 렌더한 동작을 캐릭터에 두지 못함", exc_info=True)
+        return False
+
+
+def can_remember(cur: dict | None, before: dict | None, original_deleted: bool) -> bool:
+    """remember_clips 가 캐릭터 목록에 더해도 되는지. 미리 렌더가 도는 중({} · PENDING)이거나 이야기를 시작한 뒤 목록이 바뀌었거나
+    (관절을 고침) 원본을 지웠으면 안 된다"""
+
+    if original_deleted or cur == {}:
+        return False
+    if cur and any(v == PENDING for v in cur.values()):
+        return False
+    return (cur or {}) == (before or {})
+
+
 def make_page_clips(
     story: Story, character: Character, storage, book: Book, sprites: set[str] | None = None
 ) -> dict[str, str]:
-    """쪽 동작에 쓸 영상 {동작: 경로}. 동작마다 하나 (지금은 많아야 두 가지).
+    """쪽 동작에 쓸 영상 {동작: 경로}.
 
-    손 흔들기는 S-05 미리보기, 통통 뛰기는 캐릭터를 만든 직후 미리 렌더한 영상(motion_clips)을
-    이야기 폴더로 복사한다. 미리 만든 것이 없는 예전 그림만 여기서 렌더한다 (150프레임).
+    캐릭터를 만든 직후 미리 렌더한 영상(motion_clips, 손 흔들기는 S-05 미리보기)과 앞 이야기에서 렌더해 캐릭터 쪽에 둔 영상은
+    이야기 폴더로 복사한다. 없는 동작은 여기서 렌더한다: 여럿이면 동시에(RENDER_WORKERS), 렌더한 것은 캐릭터 쪽에도 둔다
+    (remember_clips, 다음 이야기는 복사만).
     """
 
-    needed = {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}
+    needed = sorted({PAGE_MOTIONS.get(p.action) for p in book.pages} - {None})
+    before = dict(character.motion_clips) if character.motion_clips is not None else None
     ready = dict(character.motion_clips or {})
     if character.preview_blob_path:
         ready[DEFAULT_MOTION] = character.preview_blob_path
     can_render = bool(character.ai_request_id) and character.original_deleted_at is None
-    clips: dict[str, str] = {}
-    for motion in sorted(needed):
+    redo = [m for m in needed if ready.get(m) and can_render and sprite_needs_rerender(storage, ready[m], m)]
+    # 미리 렌더가 실패했거나 아직이면(값이 None · PENDING) 다시 하지 않는다, 그 쪽은 멈춘 그림
+    fresh = [m for m in needed if m not in ready and can_render]
+    results: dict[str, RenderResult | None] = {}
+    if redo or fresh:
+        joints = current_joints(character)   # 스레드에서 DB 관계를 읽지 않게 여기서
+        with ThreadPoolExecutor(min(RENDER_WORKERS, len(redo) + len(fresh))) as ex:
+            futures = {m: ex.submit(render_clip, character, m, joints) for m in redo + fresh}
+            for m, f in futures.items():
+                try:
+                    results[m] = f.result()
+                except Exception:
+                    log.exception("쪽 동작 %s 렌더 실패, 그 쪽은 멈춘 그림으로", m)
+                    results[m] = None
+    for motion in redo:
+        result = results.get(motion)
         try:
-            dst = f"results/{story.id}/{motion}.mp4"
-            if ready.get(motion) and can_render and sprite_needs_rerender(storage, ready[motion], motion):
-                result = render_clip(character, motion)
-                if result.content and result.sprite and result.sprite_in_place:
-                    save_clip(storage, ready[motion], result)  # 캐릭터 쪽 것을 바꿔 다음 이야기는 복사만
-                else:
-                    meta = json.loads(storage.read(sprite_meta_path(ready[motion])))
-                    storage.save(sprite_meta_path(ready[motion]), json.dumps({**meta, "old_ai": True}).encode())
-            if ready.get(motion):
-                # 미리 만든 영상(과 투명 프레임 묶음)을 복사한다.
-                # 관절을 고치면 캐릭터 쪽 영상은 지워지므로 이야기에 따로 둔다
-                clips[motion], has_sprite = copy_clip(storage, ready[motion], dst)
-                if has_sprite and sprites is not None:
-                    sprites.add(motion)
-            elif motion in ready or not can_render:
-                continue  # 미리 렌더가 실패했거나 아직이면 다시 하지 않는다 — 그 쪽은 멈춘 그림
+            if result and result.content and result.sprite and result.sprite_in_place:
+                save_clip(storage, ready[motion], result)  # 캐릭터 쪽 것을 바꿔 다음 이야기는 복사만
             else:
-                result = render_clip(character, motion)  # 예전 그림: 미리 만든 것이 없다
-                if result.content:
-                    clips[motion] = save_clip(storage, dst, result)
-                    if result.sprite and sprites is not None:
-                        sprites.add(motion)
+                meta = json.loads(storage.read(sprite_meta_path(ready[motion])))
+                storage.save(sprite_meta_path(ready[motion]), json.dumps({**meta, "old_ai": True}).encode())
         except Exception:
-            log.exception("쪽 동작 %s 영상 실패, 그 쪽은 멈춘 그림으로", motion)
+            log.exception("쪽 동작 %s 다시 렌더 저장 실패", motion)
+    new: dict[str, str] = {}
+    for motion in fresh:
+        result = results.get(motion)
+        if result and result.content:
+            try:
+                new[motion] = save_clip(storage, f"previews/{character.id}-{uuid.uuid4().hex[:8]}-{motion}.mp4", result)
+                ready[motion] = new[motion]
+            except Exception:
+                log.exception("쪽 동작 %s 저장 실패, 그 쪽은 멈춘 그림으로", motion)
+    if new and not remember_clips(character.id, before, new):
+        log.info("story %s: 새로 렌더한 동작 %s 을 캐릭터에 두지 않음 (미리 렌더 중이거나 관절이 바뀜)", story.id, sorted(new))
+    clips: dict[str, str] = {}
+    for motion in needed:
+        if not ready.get(motion):
             continue
+        try:
+            # 캐릭터 쪽 영상(과 투명 프레임 묶음)을 이야기 폴더로 복사한다. 관절을 고치면 캐릭터 쪽 영상은 지워지므로 이야기에 따로 둔다
+            clips[motion], has_sprite = copy_clip(storage, ready[motion], f"results/{story.id}/{motion}.mp4")
+            if has_sprite and sprites is not None:
+                sprites.add(motion)
+        except Exception:
+            log.exception("쪽 동작 %s 영상 복사 실패, 그 쪽은 멈춘 그림으로", motion)
     return clips
 
 
@@ -1024,16 +1099,24 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 fit_form(book, character.form)
                 story.text = book.text()
                 _stop_if_cancelled(job_id)
-                audio = (
-                    cached_page_audio(story, storage, book, card_audio_key(stored, story))
-                    if shared_audio
-                    else make_page_audio(story, storage, book)
-                )
-                _stop_if_cancelled(job_id)
-                wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}, stop)
-                _stop_if_cancelled(job_id)
+                # 쪽 음성과 쪽 동작은 서로 상관이 없어 함께 만든다 (2026-11-09 「이야기 생성 시간 단축」, 전에는 음성이 다 끝나야
+                # 동작을 기다리고 렌더했다). 음성은 다른 스레드라 DB 객체를 건드리지 않고 목소리 배정은 cast 에 받아 끝나고 넣는다
+                cast: dict = {}
                 sprites: set[str] = set()   # 투명 프레임 묶음까지 있는 동작
-                clips = make_page_clips(story, character, storage, book, sprites)
+                audio_key = card_audio_key(stored, story) if shared_audio else None   # DB 객체는 여기(본 스레드)서 읽는다
+                with ThreadPoolExecutor(1) as bg:
+                    audio_job = bg.submit(
+                        (lambda: cached_page_audio(story, storage, book, audio_key, cast))
+                        if shared_audio
+                        else (lambda: make_page_audio(story, storage, book, cast))
+                    )
+                    wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}, stop)
+                    _stop_if_cancelled(job_id)
+                    clips = make_page_clips(story, character, storage, book, sprites)
+                    audio = audio_job.result()
+                if cast.get("voices") is not None:
+                    story.voice_cast = cast["voices"]
+                _stop_if_cancelled(job_id)
                 data = book.to_json()
                 for page, path in zip(data["pages"], audio, strict=True):
                     page["audio_blob_path"] = path

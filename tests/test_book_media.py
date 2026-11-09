@@ -475,3 +475,61 @@ def test_story_still_is_trimmed_to_drawing():
     out = Image.open(io.BytesIO(jobs.trim_still(buf.getvalue())))
     assert out.size[0] <= 210 and out.size[1] <= 310 and out.size[0] >= 200
     assert jobs.trim_still(b"not png") == b"not png"
+
+
+# 이야기 생성 시간 단축 (2026-11-09): 새로 렌더한 동작은 캐릭터에도 두고, 여럿이면 동시에 렌더한다
+def test_can_remember_rules():
+    done = {"walk": "a.mp4", "run": None}
+    assert jobs.can_remember(done, dict(done), False)
+    assert jobs.can_remember(None, None, False)                       # 미리 렌더가 없던 예전 그림
+    assert not jobs.can_remember({}, {}, False)                        # 미리 렌더를 막 시작함
+    assert not jobs.can_remember({"walk": jobs.PENDING}, {"walk": jobs.PENDING}, False)   # 미리 렌더 중
+    assert not jobs.can_remember({"walk": "b.mp4"}, done, False)      # 그사이 관절을 고쳐 목록이 바뀜
+    assert not jobs.can_remember(done, dict(done), True)               # 원본을 지움
+
+
+def test_page_clips_remember_new_renders(monkeypatch):
+    ai = FakeAI()
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
+    kept = []
+    monkeypatch.setattr(jobs, "remember_clips", lambda cid, before, new: kept.append((cid, before, new)) or True)
+    storage = get_storage()
+    storage.save("previews/c1-wave.mp4", b"wave")
+    for m in ("walk", "run"):
+        storage.save(f"previews/c1-{m}.mp4", m.encode())
+    ready = {m: f"previews/c1-{m}.mp4" for m in ("walk", "run")}
+    character = _character(preview_blob_path="previews/c1-wave.mp4", motion_clips=dict(ready))
+    story = _story()
+    clips = jobs.make_page_clips(story, character, storage, Book("숲", PAGES, [1, 2, 3, 5]))
+    # 미리 만든 것이 없는 춤만 렌더하고, 캐릭터 쪽 경로에 둔 뒤 이야기 폴더로 복사한다
+    assert [m for m, _ in ai.motions] == ["dab_gentle"]
+    assert len(kept) == 1 and kept[0][1] == ready and set(kept[0][2]) == {"dab_gentle"}
+    assert kept[0][2]["dab_gentle"].startswith("previews/c1-")
+    assert clips["dab_gentle"] == f"results/{story.id}/dab_gentle.mp4"
+    assert storage.read(clips["dab_gentle"]) == b"mp4"
+
+
+def test_page_clips_render_new_motions_at_once(monkeypatch):
+    import threading
+    import time as _time
+
+    class SlowAI(FakeAI):
+        def __init__(self):
+            super().__init__()
+            self.now, self.most, self.lock = 0, 0, threading.Lock()
+
+        def render(self, req):
+            with self.lock:
+                self.now += 1
+                self.most = max(self.most, self.now)
+            _time.sleep(0.05)
+            with self.lock:
+                self.now -= 1
+            return super().render(req)
+
+    ai = SlowAI()
+    monkeypatch.setattr(jobs, "get_ai_client", lambda size=None: ai)
+    monkeypatch.setattr(jobs, "remember_clips", lambda *a: True)
+    clips = jobs.make_page_clips(_story(), _character(), get_storage(), Book("숲", PAGES, [1, 2, 3, 5]))
+    # 미리 만든 것이 없는 예전 그림: 네 동작을 RENDER_WORKERS(3) 개씩 함께
+    assert len(clips) == 4 and ai.most == jobs.RENDER_WORKERS
