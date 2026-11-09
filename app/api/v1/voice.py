@@ -71,6 +71,7 @@ def _forget(db: Session, voice_id: str) -> None:
         # 우리 쪽은 계속 지운다. 남은 목소리는 로그로 찾아 손으로 지운다
         log.exception("ElevenLabs 목소리 %s 를 지우지 못했습니다", voice_id)
     storage = get_storage()
+    storage.delete(f"voice-samples/{voice_id}.mp3")
     for story in db.scalars(select(Story).where(Story.narrator_voice_id == voice_id)):
         storage.delete(story.audio_blob_path)
         story.audio_blob_path = None
@@ -221,3 +222,40 @@ def register_child_voice(
 )
 def delete_child_voice(db: Session = Depends(get_db), user: User = Depends(current_user)) -> Response:
     return _delete(db, user, CHILD)
+
+
+# ─── 등록한 목소리 들어 보기 (11/9 사용자 「녹음된 결과물을 확인할 수 없다」) ───
+# 녹음은 저장하지 않으므로 원본은 못 들려준다. 대신 만들어진 목소리로 짧은 문장을 읽어 준다(ElevenLabs 한 번).
+# 같은 목소리면 한 번 만든 것을 다시 쓴다 — 목소리 id 가 바뀌면(다시 녹음) 새로 만든다
+SAMPLE_TEXT = "안녕! 이 목소리로 오늘의 이야기를 읽어 줄게요."
+
+
+def _sample(db: Session, user: User, kind: str) -> Response:
+    row = _row(db, user, kind)
+    if row is None or not row.elevenlabs_voice_id:
+        raise AppError("VOICE_NOT_REGISTERED", "아직 등록한 목소리가 없어요.", 404)
+    storage = get_storage()
+    path = f"voice-samples/{row.elevenlabs_voice_id}.mp3"
+    try:
+        audio = storage.read(path)
+    except Exception:  # noqa: BLE001
+        speech = tts.get_tts(row.elevenlabs_voice_id)
+        if speech is None:
+            raise AppError("VOICE_UNAVAILABLE", "지금은 목소리를 들려줄 수 없어요.", 503) from None
+        try:
+            audio = speech.speak(SAMPLE_TEXT)
+        except Exception as e:
+            log.exception("목소리 들어 보기 실패")
+            raise AppError("VOICE_FAILED", "목소리를 들려주지 못했어요. 잠시 뒤에 다시 해 주세요.", 502) from e
+        storage.save(path, audio)
+    return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"})
+
+
+@router.get("/sample", responses=_ERRORS, summary="보호자 목소리 들어 보기 (등록한 목소리로 읽은 짧은 문장 MP3)")
+def guardian_sample(db: Session = Depends(get_db), user: User = Depends(current_user)) -> Response:
+    return _sample(db, user, GUARDIAN)
+
+
+@child_router.get("/sample", responses=_ERRORS, summary="아이 목소리 들어 보기 (등록한 목소리로 읽은 짧은 문장 MP3)")
+def child_sample(db: Session = Depends(get_db), user: User = Depends(current_user)) -> Response:
+    return _sample(db, user, CHILD)

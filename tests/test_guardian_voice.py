@@ -318,3 +318,19 @@ def test_story_reads_with_child_voice(client, eleven):
     # 아이 목소리가 없으면 기본으로 (아이 흐름을 막지 않는다)
     client.delete("/api/v1/me/child-voice", headers=_auth(token))
     assert _story(client, token, cid, narrator="child")["narrator"] == "default"
+
+
+def test_sample_reads_with_registered_voice_and_reuses_it(client, eleven):
+    """등록한 목소리 들어 보기 (11/9) — 녹음은 없으니 그 목소리로 짧은 문장. 두 번째는 만든 것을 다시 쓴다"""
+    token = _token()
+    assert client.get("/api/v1/me/voice/sample", headers=_auth(token)).status_code == 404
+    _register(client, token)
+    first = client.get("/api/v1/me/voice/sample", headers=_auth(token))
+    assert first.status_code == 200 and first.content == b"ID3mp3"
+    spoke = [c for c in eleven if "text-to-speech" in c[1]]
+    assert spoke and spoke[-1][1].endswith("/guardian-1")
+    client.get("/api/v1/me/voice/sample", headers=_auth(token))
+    assert len([c for c in eleven if "text-to-speech" in c[1]]) == len(spoke)
+    # 지우면 들어 보기 파일도 지운다
+    client.delete("/api/v1/me/voice", headers=_auth(token))
+    assert client.get("/api/v1/me/voice/sample", headers=_auth(token)).status_code == 404
