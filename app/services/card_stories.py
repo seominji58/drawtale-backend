@@ -208,7 +208,7 @@ def short_payload(text: str | None = None, sentences=None, cast: dict | None = N
 
 
 # ── 꺼내 주기 ──
-def find(db, story) -> CardStory | None:
+def find(db, story, form: str = "biped") -> CardStory | None:
     """이 이야기에 쓸 저장본. 카드로만 고른 이야기이고 사람이 통과시킨 것이 있을 때만.
 
     아이가 말로 덧붙였거나(spoken) 더 고른 칸(extras)이 있으면 None — 그때 만든다.
@@ -229,6 +229,7 @@ def find(db, story) -> CardStory | None:
             result=story.result,
             length=story.length,
             voice_mode=story.voice_mode,
+            form=form,
             status="approved",
         )
         .one_or_none()

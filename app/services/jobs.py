@@ -997,8 +997,9 @@ def run_story_job(job_id: uuid.UUID) -> None:
         stop = lambda: cancelled(job_id)  # noqa: E731
         try:
             # 카드로만 고른 이야기는 사람이 읽고 통과시킨 저장본을 꺼낸다 — 대본 0초 (pt_docs 13 1-1)
-            # 미리 만든 카드 이야기는 주인공이 사람이라고 보고 썼다(「손을 흔들었어요」) — 다른 형태는 대본 AI 가 새로 (pt_docs 19)
-            stored = card_stories.find(db, story) if character.form == forms.DEFAULT else None
+            # 미리 만든 카드 이야기는 형태별로 따로 썼다(사람형은 「손을 흔들었어요」) — 그 형태 것이 없으면 대본 AI 가 새로 (pt_docs 19,
+            # 2026-11-09 4족형 · 사슬형도 미리 씀)
+            stored = card_stories.find(db, story, character.form or forms.DEFAULT)
             name = card_stories.hero_name(story)
             # 보호자 목소리로 읽는 이야기는 만들어 둔 음성(기본 나레이터)을 쓰지 않고,
             # 이 목소리 음성을 함께 쓰는 곳(card_audio)에 두지도 않는다
