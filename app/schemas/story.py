@@ -31,6 +31,8 @@ class Narrator(StrEnum):
 
     default = "default"
     guardian = "guardian"
+    # 보호자가 등록한 아이 목소리 (2026-11-09, 시연용). 없으면 기본
+    child = "child"
 
 
 class StoryLength(StrEnum):
@@ -111,6 +113,7 @@ class StoryCreateRequest(BaseModel):
         default=Narrator.default,
         description=(
             "guardian: 보호자가 등록한 목소리로 나레이션 (로그인 · 목소리 등록 필요, 없으면 기본). "
+            "child: 보호자가 등록한 아이 목소리로 (2026-11-09, 없으면 기본). "
             "캐릭터 목소리 판에서도 나레이터만 바뀌고 인물 대사 목소리는 그대로"
         ),
     )
@@ -208,7 +211,7 @@ class StoryResponse(BaseModel):
     )
     length: StoryLength
     narrator: Narrator = Field(
-        default=Narrator.default, description="실제로 읽은 나레이터. guardian 이면 보호자 목소리"
+        default=Narrator.default, description="실제로 읽은 나레이터. guardian 이면 보호자, child 면 아이 목소리"
     )
     book: Book | None = Field(
         default=None, description="length=long 일 때만. text 는 쪽 글을 이어 붙인 것"

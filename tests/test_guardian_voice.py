@@ -262,3 +262,59 @@ def test_delete_account_leaves_nothing(client, eleven):
     # 이 토큰으로는 더 못 들어오고, 남의 것은 남는다
     assert client.get("/api/v1/auth/me", headers=_auth(token)).status_code == 401
     assert client.get(f"/api/v1/characters/{other_cid}", headers=_auth(other)).status_code == 200
+
+
+# ─── 아이 목소리 (2026-11-09, 시연용) ───
+
+CHILD_CONSENT = {
+    "agree_collect": "true",
+    "agree_transfer": "true",
+    "guardian_consent": "true",
+    "consent_version": "2026-11-09-child",
+}
+
+
+def _register_child(client, token, **form):
+    data = {**CHILD_CONSENT, **form}
+    return client.post(
+        "/api/v1/me/child-voice", headers=_auth(token), data=data,
+        files={"audio": ("child.wav", WAV, "audio/wav")},
+    )
+
+
+@pytest.mark.parametrize("missing", ["agree_collect", "agree_transfer", "guardian_consent"])
+def test_child_voice_needs_every_consent(client, eleven, missing):
+    token = _token()
+    assert _register_child(client, token, **{missing: "false"}).json()["error"]["code"] == "CONSENT_REQUIRED"
+
+
+def test_child_and_guardian_voices_are_separate(client, eleven):
+    token = _token()
+    assert _register(client, token).status_code == 201          # 보호자 → guardian-1
+    assert _register_child(client, token).status_code == 201    # 아이 → guardian-2 (흉내 id 순서)
+    assert client.get("/api/v1/me/child-voice", headers=_auth(token)).json()["registered"] is True
+    assert client.get("/api/v1/me/voice", headers=_auth(token)).json()["registered"] is True
+    with SessionLocal() as db:
+        kinds = {v.kind: v.elevenlabs_voice_id for v in db.query(GuardianVoice).all()}
+    assert kinds == {"guardian": "guardian-1", "child": "guardian-2"}
+    # 이름에 종류가 붙는다 (사람 정보 없이)
+    assert ("POST", "/v1/voices/add") in eleven
+
+    # 아이 목소리만 지워도 보호자 목소리는 남는다
+    assert client.delete("/api/v1/me/child-voice", headers=_auth(token)).status_code == 204
+    assert client.get("/api/v1/me/child-voice", headers=_auth(token)).json()["registered"] is False
+    assert client.get("/api/v1/me/voice", headers=_auth(token)).json()["registered"] is True
+
+
+def test_story_reads_with_child_voice(client, eleven):
+    token = _token()
+    _register(client, token)        # guardian-1
+    _register_child(client, token)  # guardian-2 (흉내 id 순서) = 아이 목소리
+    cid = _upload(client, token)
+    story = _story(client, token, cid, narrator="child")
+    assert story["status"] == "succeeded"
+    assert story["narrator"] == "child"
+    assert ("POST", "/v1/text-to-speech/guardian-2") in eleven
+    # 아이 목소리가 없으면 기본으로 (아이 흐름을 막지 않는다)
+    client.delete("/api/v1/me/child-voice", headers=_auth(token))
+    assert _story(client, token, cid, narrator="child")["narrator"] == "default"

@@ -50,9 +50,10 @@ def delete_account(db: Session, user: User) -> None:
     """계정과 그 아래 전부를 지운다. 바깥(파일 · 목소리 · AI 세션)은 실패해도 계속 지우고 로그로 남긴다. 커밋까지 한다."""
     from app.api.v1.voice import _forget   # 보호자 목소리 지우기와 같은 길 (그 목소리로 만든 음성까지)
 
-    voice = db.scalar(select(GuardianVoice).where(GuardianVoice.user_id == user.id))
-    if voice is not None and voice.elevenlabs_voice_id:
-        _forget(db, voice.elevenlabs_voice_id)
+    # 보호자 · 아이 목소리 모두 (2026-11-09 아이 목소리)
+    for voice in db.scalars(select(GuardianVoice).where(GuardianVoice.user_id == user.id)):
+        if voice.elevenlabs_voice_id:
+            _forget(db, voice.elevenlabs_voice_id)
 
     storage = get_storage()
     for path in account_files(db, user):

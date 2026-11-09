@@ -82,8 +82,12 @@ def create_story(
     rate_limit.claim(busy_key)
     try:
         story = Story(**body.model_dump(exclude={"narrator"}))
-        if body.narrator == Narrator.guardian and user is not None:
-            voice = db.scalar(select(GuardianVoice).where(GuardianVoice.user_id == user.id))
+        if body.narrator in (Narrator.guardian, Narrator.child) and user is not None:
+            voice = db.scalar(
+                select(GuardianVoice).where(
+                    GuardianVoice.user_id == user.id, GuardianVoice.kind == body.narrator.value
+                )
+            )
             story.narrator_voice_id = voice.elevenlabs_voice_id if voice else None
         db.add(story)
         db.flush()
@@ -175,6 +179,17 @@ def update_story(
     return story_response(story)
 
 
+def _narrator_of(story: Story) -> Narrator:
+    """실제로 읽은 나레이터 — 등록한 목소리면 그 목소리가 보호자 것인지 아이 것인지"""
+
+    if not story.narrator_voice_id:
+        return Narrator.default
+    kind = object_session(story).scalar(
+        select(GuardianVoice.kind).where(GuardianVoice.elevenlabs_voice_id == story.narrator_voice_id)
+    )
+    return Narrator.child if kind == "child" else Narrator.guardian
+
+
 def story_response(story: Story) -> StoryResponse:
     storage = get_storage()
     # 짧은 이야기의 동작 영상 옆 투명 프레임 묶음 (2026-11-03) — 화면이 긴 이야기처럼 장면 층으로 쌓는다
@@ -199,7 +214,7 @@ def story_response(story: Story) -> StoryResponse:
         protagonist_name=story.protagonist_name,
         title=story.title,
         length=story.length,
-        narrator=Narrator.guardian if story.narrator_voice_id else Narrator.default,
+        narrator=_narrator_of(story),
         # 정한 제목이 있으면 책 제목도 그것으로 (책장 · 쪽 머리가 같은 제목)
         book=book_response({**story.book, "title": story.title} if story.book and story.title else story.book, storage),
         text=story.text,

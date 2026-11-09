@@ -573,6 +573,10 @@ S-11 「다 했어요」의 「책 제목」 · S-12 책장 · S-13 제목 바�
 오류: 동의가 하나라도 빠지면 `400 CONSENT_REQUIRED`(ElevenLabs 로 아무것도 보내지 않음), 형식 · 크기 `400 INVALID_AUDIO`, ElevenLabs 설정 없음 `503 VOICE_UNAVAILABLE`, ElevenLabs 실패 `502 VOICE_FAILED`.
 요금제마다 만들 수 있는 목소리 개수가 정해져 있다 — 가족마다 하나씩 쓰므로 배포 전에 확인한다.
 
+**아이 목소리 `/api/v1/me/child-voice`** (2026-11-09, 교수님 지시 · 시연용): 위와 같은 모양(`GET` · `POST` · `DELETE`). `POST` 의 동의는 `agree_collect` · `agree_transfer` · `guardian_consent`(법정대리인으로서 아이 녹음에 동의) — `own_voice` 대신. 녹음은 30초부터(프론트), 저장하지 않고 ElevenLabs 로 넘긴다. 표 `guardian_voices.kind`(`guardian` · `child`, 계정마다 종류별 하나, migration `d9e0f1a2b3c4`).
+이야기 요청(2-5) `narrator: "child"` 면 아이 목소리로 읽고(없으면 기본), 응답 `narrator` 도 `child`. 탈퇴하면 두 목소리 모두 지운다.
+**주의**: ElevenLabs 개인정보 정책은 만 18세 미만 음성 데이터를 받지 않는다. 엔진은 나중에 공개 모델(우리 서버)로 바꾸고, 그 전까지 시연 · 시험은 어른이 한다 (팀 결정). 바꿀 곳은 `app/services/tts.py` `add_voice` · 아이 목소리 합성 경로.
+
 ### 2-16. `/api/v1/me/guardian-pin` · `/api/v1/me/onboarded` — 보호자 비밀번호 · 보호자 소개 카드 (2026-11-06, pt_docs 20 3장)
 
 설정은 누구나 톱니로 연다. 아이가 바꾸면 안 되는 것(보호자 모드 · 사진 올리기 · 목소리 · 계정 · 제목 고치기 · 지우기 …)은 설정의 「보호자 칸」에 두고
