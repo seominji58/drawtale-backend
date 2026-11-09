@@ -304,7 +304,8 @@ def render_clip(character: Character, motion: str) -> RenderResult:
 # 카드 이야기 512가지에서 많이 쓰는 순 (걷기 1,057쪽 · 점프 387 · 뛰기 316 · 춤 308, 2026-11-03) — 이야기가 필요한 것만 기다리므로
 # 자주 쓰는 것이 먼저 끝나야 덜 기다린다. 숨쉬기(2026-11-04)는 가만히 쪽(45%)이 되어 거의 모든 이야기에 나온다.
 # 다른 새 동작은 미리 만들지 않고 이야기에 나올 때 렌더한다 (page_motions.NEW_PER_STORY)
-PRERENDER_MOTIONS = ("walk", "jumping_gentle", "breathe", "run", "dab_gentle")
+# walk_left · run_left: 사람형 왼쪽 걸음 (왼쪽으로 옮겨 가는 쪽, 11/9) — 형태가 할 수 있는 것만 렌더하니 사람형만
+PRERENDER_MOTIONS = ("walk", "jumping_gentle", "breathe", "run", "dab_gentle", "walk_left", "run_left")
 # 미리 렌더 중인 동작의 자리 (motion_clips 값). 실패는 None, 끝나면 경로
 PENDING = ""
 # 이야기를 만들 때 미리 렌더가 아직 돌고 있으면 기다리는 시간. 넘으면 그 쪽들은 멈춘 그림
@@ -766,6 +767,18 @@ def make_page_audio(story: Story, storage, book: Book) -> list[str | None]:
         return list(ex.map(one, book.pages))
 
 
+# 사람형 걷기 · 뛰기는 다리가 오른쪽으로 내딛는 옆걸음이다 (AI cmu1_side, 11/9). 왼쪽으로 옮겨 가는 쪽에 쓸 왼쪽 걸음도
+# 같이 렌더한다 — 화면이 그림을 좌우로 뒤집으면 아이 그림이 바뀌어 안 된다 (사용자 「좌우 바뀌면 안 되지」)
+LEFT_SUFFIX = "_left"
+
+
+def left_motions(character: Character, book: Book) -> set[str]:
+    """이 이야기에 필요한 왼쪽 걸음 동작 (사람형만)."""
+    if (character.form or "biped") != "biped":
+        return set()
+    return {f"{PAGE_MOTIONS[p.action]}{LEFT_SUFFIX}" for p in book.pages if PAGE_MOTIONS.get(p.action) in TRAVEL_MOTIONS}
+
+
 def make_page_clips(
     story: Story, character: Character, storage, book: Book, sprites: set[str] | None = None
 ) -> dict[str, str]:
@@ -775,7 +788,7 @@ def make_page_clips(
     이야기 폴더로 복사한다. 미리 만든 것이 없는 예전 그림만 여기서 렌더한다 (150프레임).
     """
 
-    needed = {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}
+    needed = ({PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}) | left_motions(character, book)
     ready = dict(character.motion_clips or {})
     if character.preview_blob_path:
         ready[DEFAULT_MOTION] = character.preview_blob_path
@@ -1045,6 +1058,12 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     if meta:
                         page["sprite_blob_path"] = sprite_path_for(clip)
                         page["sprite_frames"], page["sprite_box"] = meta["frames"], meta["box"]
+                        # 왼쪽으로 옮겨 가는 쪽에 쓸 왼쪽 걸음 (사람형 걷기 · 뛰기)
+                        left = clips.get(f"{PAGE_MOTIONS.get(page['action'])}{LEFT_SUFFIX}")
+                        left_meta = left and f"{PAGE_MOTIONS.get(page['action'])}{LEFT_SUFFIX}" in sprites                             and read_sprite_meta(storage, left)
+                        if left_meta:
+                            page["sprite_left_blob_path"] = sprite_path_for(left)
+                            page["sprite_left_frames"], page["sprite_left_box"] = left_meta["frames"], left_meta["box"]
                 story.book = data
                 story.audio_blob_path = None
                 if clips:

@@ -142,8 +142,10 @@ def test_page_clips_copy_prerendered(monkeypatch):
     clips = jobs.make_page_clips(story, character, storage, Book("숲", PAGES, [1, 2, 3, 5]))
     # 미리 만든 영상을 쓰므로 렌더하지 않는다.
     # 관절을 고쳐도 이야기 영상이 남게 이야기 폴더로 복사한다
-    assert ai.motions == []
+    # (사람형 왼쪽 걸음 walk_left · run_left 는 미리 만든 것이 없으면 여기서 렌더한다 — 따로 test_left_walk_clips)
+    assert _base(ai.motions) == []
     # 쪽 동작마다 제 동작 (2026-11-03 — 전에는 걷기 · 뛰기 · 춤이 모두 점프였다)
+    clips = {k: v for k, v in clips.items() if not k.endswith("_left")}
     assert clips == {
         m: f"results/{story.id}/{m}.mp4" for m in ("wave_hello_gentle", "walk", "run", "dab_gentle")
     }
@@ -158,8 +160,8 @@ def test_page_clips_skip_failed_prerender(monkeypatch):
         _story(), character, get_storage(), Book("숲", PAGES, [1, 2, 3, 5])
     )
     # 미리 렌더가 실패한 동작은 이야기를 만들 때 다시 하지 않는다 (몇 분씩 걸린다) — 멈춘 그림
-    assert ai.motions == [("wave_hello_gentle", jobs.PREVIEW_MAX_FRAMES)]
-    assert set(clips) == {"wave_hello_gentle"}
+    assert _base(ai.motions) == [("wave_hello_gentle", jobs.PREVIEW_MAX_FRAMES)]
+    assert {k for k in clips if not k.endswith("_left")} == {"wave_hello_gentle"}
 
 
 def test_page_clips_render_for_old_characters(monkeypatch):
@@ -169,8 +171,9 @@ def test_page_clips_render_for_old_characters(monkeypatch):
         _story(), _character(), get_storage(), Book("숲", PAGES, [1, 2, 3, 5])
     )
     # 미리 만든 것이 없는 예전 그림: 쪽에 나오는 동작마다 한 번
-    assert sorted(m for m, _ in ai.motions) == ["dab_gentle", "run", "walk", "wave_hello_gentle"]
-    assert len(clips) == 4
+    assert sorted(m for m, _ in _base(ai.motions)) == ["dab_gentle", "run", "walk", "wave_hello_gentle"]
+    assert sorted(k for k in clips if k.endswith("_left")) == ["run_left", "walk_left"]
+    assert len(clips) == 6
 
 
 class FakeDB:
@@ -377,14 +380,14 @@ def test_old_travel_sprite_rerendered_once(monkeypatch):
     sprites: set[str] = set()
     clips = jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1, 2]), sprites)
     # 걷기만 다시 (춤은 제자리 동작이라 예전 것 그대로)
-    assert [m for m, _ in ai.motions] == ["walk"]
+    assert [m for m, _ in _base(ai.motions)] == ["walk"]
     assert storage.read(jobs.sprite_path_for(clips["walk"])) == b"webp:walk"
     assert storage.read("previews/s2-walk.sprite.webp") == b"webp:walk"
     assert storage.read(jobs.sprite_path_for(clips["dab_gentle"])) == b"old-sprite"
     # 다음 이야기는 복사만
     ai.motions.clear()
     jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1, 2]), set())
-    assert ai.motions == []
+    assert _base(ai.motions) == []
 
 
 def test_old_ai_rerender_tried_once(monkeypatch):
@@ -398,11 +401,11 @@ def test_old_ai_rerender_tried_once(monkeypatch):
     character = _character(preview_blob_path=None, motion_clips={"walk": "previews/s3-walk.mp4"})
     pages = [Page(1, "place", "walk", [(NARRATOR, "a", "")])]
     clips = jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1]), set())
-    assert [m for m, _ in ai.motions] == ["walk"]
+    assert [m for m, _ in _base(ai.motions)] == ["walk"]
     assert storage.read(jobs.sprite_path_for(clips["walk"])) == b"old-sprite"
     ai.motions.clear()
     jobs.make_page_clips(_story(), character, storage, Book("t", pages, [1]), set())
-    assert ai.motions == []
+    assert _base(ai.motions) == []
 
 
 def test_short_story_copies_prerendered_clip_with_sprite(monkeypatch):
@@ -475,3 +478,17 @@ def test_story_still_is_trimmed_to_drawing():
     out = Image.open(io.BytesIO(jobs.trim_still(buf.getvalue())))
     assert out.size[0] <= 210 and out.size[1] <= 310 and out.size[0] >= 200
     assert jobs.trim_still(b"not png") == b"not png"
+
+
+def _base(motions):
+    """사람형 왼쪽 걸음(*_left)을 뺀 렌더 요청"""
+    return [m for m in motions if not (m[0] if isinstance(m, tuple) else m).endswith("_left")]
+
+
+def test_left_walk_clips_only_for_humans():
+    """사람형 걷기 · 뛰기 쪽만 왼쪽 걸음을 같이 (11/9 — 왼쪽으로 갈 때 그림을 뒤집지 않으려고)"""
+    pages = [Page(1, "place", "walk", [(NARRATOR, "a", "")]), Page(2, "action", "run", [(NARRATOR, "b", "")]),
+             Page(3, "result", "dance", [(NARRATOR, "c", "")])]
+    book = Book("t", pages, [1, 2, 3])
+    assert jobs.left_motions(_character(), book) == {"walk_left", "run_left"}
+    assert jobs.left_motions(_character(form="quadruped"), book) == set()
