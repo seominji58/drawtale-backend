@@ -203,8 +203,12 @@ def test_not_required_without_key_in_local(anon_client, kakao):
     assert me["age_verified"] is True
 
 
-def test_required_in_production_even_without_key(monkeypatch):
+def test_production_without_key_does_not_lock_people_out(monkeypatch):
+    # 키 없는 운영에 배포되면 가입 · 기존 계정이 막혔다 (11/9). 키가 있을 때만, 또는 true 로 정했을 때만 요구한다
     s = get_settings()
     monkeypatch.setattr(s, "app_env", "prod")
+    monkeypatch.setattr(s, "portone_api_secret", "")
     monkeypatch.setattr(s, "age_verification_required", None)
+    assert s.age_check_required is False
+    monkeypatch.setattr(s, "age_verification_required", True)
     assert s.age_check_required is True

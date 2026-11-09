@@ -89,8 +89,9 @@ class Settings(BaseSettings):
     portone_store_id: str = ""
     portone_api_base: str = "https://api.portone.io"
     age_verification_min_age: int = 14
-    # 가입에 본인인증을 요구하는지. 비우면 PORTONE_API_SECRET 이 있거나 운영(APP_ENV=prod)이면 요구한다 , 
-    # 로컬에서 키 없이 화면을 시험할 때는 묻지 않고, 운영에서 키를 빠뜨리면 가입이 막힌다(조용히 건너뛰지 않게)
+    # 가입에 본인인증을 요구하는지. 비우면 PORTONE_API_SECRET 이 있을 때만 요구한다.
+    # 처음엔 운영(APP_ENV=prod)이면 키가 없어도 요구했는데, 11/9 push 가 키 없는 운영에 자동 배포되어
+    # 새 가입이 막히고 기존 계정은 닫을 수 없는 확인 창에 갇혔다. 운영에서 꼭 켜려면 true 로 둔다
     age_verification_required: bool | None = None
 
     cors_origins: str = "http://localhost:5173"
@@ -126,7 +127,7 @@ class Settings(BaseSettings):
     def age_check_required(self) -> bool:
         if self.age_verification_required is not None:
             return self.age_verification_required
-        return bool(self.portone_api_secret) or self.is_production
+        return bool(self.portone_api_secret)
 
     @property
     def cors_origin_list(self) -> list[str]:

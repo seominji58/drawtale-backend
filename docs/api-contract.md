@@ -608,7 +608,7 @@ S-11 「다 했어요」의 「책 제목」 · S-12 책장 · S-13 제목 바�
   새 계정인데 확인증이 없거나 틀림 · 10분 지남 `400 AGE_CHECK_REQUIRED`, 같은 인증 건을 다른 계정에 `409 AGE_CHECK_USED`,
   키 없음 · 포트원이 키를 거절 `503 AGE_CHECK_NOT_CONFIGURED`, 포트원에 닿지 않음 `502 AGE_CHECK_UNAVAILABLE`
 - **남기는 것**: `users.age_verified_at` · `age_verification_method`(`portone-inicis`) · `age_verification_id`(unique, 한 건을 여러 계정에 못 쓰게). 이름 · 전화번호 · 생년월일 · CI · DI 는 나이를 셈한 뒤 버린다 (마이그레이션 `c8d9e0f1a2b3`)
-- 설정: `PORTONE_API_SECRET` · `PORTONE_STORE_ID`, `AGE_VERIFICATION_REQUIRED`(비우면 키가 있거나 `APP_ENV=prod` 일 때 요구, 로컬에서 키 없이 화면 시험할 때는 묻지 않는다). 프론트는 `VITE_PORTONE_STORE_ID` · `VITE_PORTONE_IDV_CHANNEL_KEY`
+- 설정: `PORTONE_API_SECRET` · `PORTONE_STORE_ID`, `AGE_VERIFICATION_REQUIRED`(비우면 `PORTONE_API_SECRET` 이 있을 때만 요구. 11/9 키 없는 운영에서 가입이 막혀 운영도 키 기준으로 바꿈). 프론트는 `VITE_PORTONE_STORE_ID` · `VITE_PORTONE_IDV_CHANNEL_KEY`
 - 배포 CSP: `script-src https://cdn.portone.io`, `frame-src` · `form-action` 에 `https://*.portone.io https://*.inicis.com` (`deploy/Caddyfile`, 프론트 `staticwebapp.config.json`)
 
 ---
