@@ -723,7 +723,8 @@ def form_action(action: str | None, form: str | None, allowed: set[str] | None =
 
 
 # 쪽 음성을 동시에 몇 개까지 만드나. ElevenLabs 요금제마다 동시 요청 한도가 있다
-PAGE_AUDIO_WORKERS = 3
+# 쪽 음성을 동시에 몇 개까지. None 이면 설정(PAGE_AUDIO_WORKERS, 기본 5, config.page_audio_workers). 시험은 이 값을 바꾼다
+PAGE_AUDIO_WORKERS: int | None = None
 
 
 # 음성 한 번 실패하면 쉬었다 다시 (ElevenLabs 동시 요청 한도 · 잠깐의 오류). 실패한 쪽은 화면이 읽지 않으므로
@@ -780,7 +781,7 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
             log.exception("%d쪽 음성 %d번 실패, 그 쪽은 음성 없이 (화면은 읽지 않는다)", page.page, TTS_TRIES)
             return None
 
-    with ThreadPoolExecutor(PAGE_AUDIO_WORKERS) as ex:
+    with ThreadPoolExecutor(max(1, PAGE_AUDIO_WORKERS or get_settings().page_audio_workers)) as ex:
         return list(ex.map(one, book.pages))
 
 

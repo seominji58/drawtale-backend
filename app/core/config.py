@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     # 속도·비용을 줄이려면 flash_v2_5
     # 2026-10-29 청취 비교로 turbo — v4 와 별 차이 없고 크레딧이 절반 (사용자)
     elevenlabs_model_id: str = "eleven_v4_turbo"
+    # 긴 이야기 쪽 음성을 동시에 몇 개까지 만들지 (2026-11-09). ElevenLabs 동시 호출 한도는 계정 전체에 걸리고 Turbo · Flash 모델은
+    # Starter 6 · Creator 10 · Pro 20 (그 밖의 모델은 절반). 다른 이야기 · 안내 음성과 겹칠 수 있어 하나를 남긴다. 넘으면 다시 시도한다
+    page_audio_workers: int = 5
     # 캐릭터 목소리 판의 인물 목소리는 app/services/voices.py 목록에 있다
 
     # Social login (authorization code flow). Secrets live only here, never in the frontend.
