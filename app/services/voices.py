@@ -6,7 +6,7 @@
 만들어 **이 팀 계정에 저장한 목소리**라 다른 계정 키로는 쓸 수 없다.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 
 # 대본에서 말하는 사람 이름. GPT 가 이 이름으로 쓴다 (story_writer.script_prompt)
 NARRATOR = "나레이션"
@@ -60,6 +60,7 @@ def cast_voices(
     protagonist: str,
     narrator_voice: str,
     speakers: Iterable[str] = (),
+    voice_types: Mapping[str, Sequence[str]] = VOICE_TYPES,
 ) -> dict[str, str]:
     """인물 이름 → 목소리 id. 나레이터와 다른 인물과 겹치지 않게 고른다.
 
@@ -70,8 +71,8 @@ def cast_voices(
     used = {narrator_voice}
 
     def pick(kind: str | None) -> str:
-        own = VOICE_TYPES.get(kind or "", ())
-        for voice in (*own, *(v for vs in VOICE_TYPES.values() for v in vs)):
+        own = tuple(voice_types.get(kind or "", ()))
+        for voice in (*own, *(v for vs in voice_types.values() for v in vs)):
             if voice not in used:
                 used.add(voice)
                 return voice

@@ -33,7 +33,7 @@ from app.services.story_writer import (
     has_dialogue,
     script_text,
 )
-from app.services.tts import ElevenLabsSpeech, get_tts
+from app.services.tts import get_tts
 from app.services.voices import NARRATOR, cast_voices
 
 log = logging.getLogger(__name__)
@@ -620,10 +620,18 @@ def book_script(book: Book) -> Script:
     )
 
 
+def _voice_types(tts) -> dict[str, tuple[str, ...]]:  # noqa: ANN001
+    """인물 목소리를 쓸 수 있으면 그 목록, 아니면 {} (OpenAI · ElevenLabs 키 없는 녹음 목소리)."""
+
+    return getattr(tts, "voice_types", None) or {}
+
+
 def make_audio(story: Story, storage, script: Script | None = None) -> str | None:
     """이야기를 음성으로 만들어 저장한다. 실패해도 이야기와 애니메이션은 그대로 제공한다.
 
-    대본에 대사가 있고 ElevenLabs 를 쓰면 대사를 인물 목소리로 읽는다. 인물 → 목소리는
+    대본에 대사가 있고 인물 목소리를 쓸 수 있으면
+    (ElevenLabs, 또는 녹음 목소리 나레이션 + ElevenLabs 대사)
+    대사를 인물 목소리로 읽는다. 인물 → 목소리는
     story.voice_cast 에 남긴다 (긴 동화책에서 쪽을 다시 만들어도 같은 목소리를 쓰려고).
     그게 실패하면 나레이터 하나로 읽는다.
     """
@@ -635,11 +643,15 @@ def make_audio(story: Story, storage, script: Script | None = None) -> str | Non
 
     try:
         audio = None
-        if script and has_dialogue(script) and isinstance(tts, ElevenLabsSpeech):
+        if script and has_dialogue(script) and _voice_types(tts):
             try:
                 lines = [line for parts in script.sentences for line in parts]
                 voices = cast_voices(
-                    script.cast, story.protagonist_voice, tts.voice_id, (ln.speaker for ln in lines)
+                    script.cast,
+                    story.protagonist_voice,
+                    tts.voice_id,
+                    (ln.speaker for ln in lines),
+                    _voice_types(tts),
                 )
                 audio = _tts_retry(lambda: tts.dialogue(lines, voices))
                 story.voice_cast = voices
@@ -810,7 +822,8 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
                     prefetch: PageAudioPrefetch | None = None) -> list[str | None]:
     """쪽마다 MP3. 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다 (음성 비용이 늘지 않는다).
 
-    캐릭터 목소리 판이고 ElevenLabs 면 대사가 있는 쪽은 인물 목소리로 읽는다. 인물 → 목소리는
+    캐릭터 목소리 판이고 인물 목소리를 쓸 수 있으면(make_audio 와 같다)
+    대사가 있는 쪽은 인물 목소리로 읽는다. 인물 → 목소리는
     이야기 전체에서 한 번 정해 story.voice_cast 에 남긴다 (쪽마다 바뀌지 않게).
     쪽 하나가 실패하면 그 쪽만 None — 프론트가 브라우저 TTS 로 읽는다.
     """
@@ -822,8 +835,10 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
 
     voices: dict[str, str] | None = None
     speakers = [s for p in book.pages for s, _, _ in p.lines if s != NARRATOR]
-    if story.voice_mode == VoiceMode.characters and speakers and isinstance(tts, ElevenLabsSpeech):
-        voices = cast_voices(book.cast, story.protagonist_voice, tts.voice_id, speakers)
+    if story.voice_mode == VoiceMode.characters and speakers and _voice_types(tts):
+        voices = cast_voices(
+            book.cast, story.protagonist_voice, tts.voice_id, speakers, _voice_types(tts)
+        )
     # 목소리 배정: cast_out 이 있으면 거기에 (다른 스레드에서 돌 때 DB 객체를 고치지 않게), 없으면 story 에 바로
     if cast_out is not None:
         cast_out["voices"] = voices

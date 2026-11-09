@@ -109,16 +109,27 @@ def register_voice(
         description="[필수] 보호자 본인 목소리이며 아이 · 다른 사람 목소리가 아님"
     ),
     consent_version: str = Form(max_length=20, description="동의한 안내문 판"),
+    ref_text: str | None = Form(
+        default=None,
+        max_length=500,
+        description="녹음에서 읽은 글 그대로 (선택). 녹음 목소리가 qwen 이면 더 닮게 만든다",
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> GuardianVoiceResponse:
     if not (agree_collect and agree_transfer and own_voice):
         raise AppError("CONSENT_REQUIRED", "필수 항목에 모두 동의해야 목소리를 등록할 수 있어요.")
-    return _register(request, audio, consent_version, db, user, GUARDIAN)
+    return _register(request, audio, consent_version, db, user, GUARDIAN, ref_text)
 
 
 def _register(
-    request: Request, audio: UploadFile, consent_version: str, db: Session, user: User, kind: str
+    request: Request,
+    audio: UploadFile,
+    consent_version: str,
+    db: Session,
+    user: User,
+    kind: str,
+    ref_text: str | None = None,
 ) -> GuardianVoiceResponse:
     if not tts.voice_cloning_ready():
         raise AppError("VOICE_UNAVAILABLE", "지금은 목소리를 등록할 수 없어요.", 503)
@@ -135,8 +146,15 @@ def _register(
     try:
         # 이름에 사람 정보를 넣지 않는다 — 계정 id 앞자리만
         voice_id = tts.add_voice(
-            f"{kind}-{str(user.id)[:8]}", data, audio.filename or "voice.wav", content_type
+            f"{kind}-{str(user.id)[:8]}",
+            data,
+            audio.filename or "voice.wav",
+            content_type,
+            ref_text=(ref_text or "").strip() or None,
         )
+    except tts.VoiceRejected as e:
+        # 녹음 탓 — 무엇을 고쳐 다시 녹음하면 되는지 알려 준다
+        raise AppError(e.code, e.message) from e
     except Exception as e:
         log.exception("%s 목소리 등록 실패", kind)
         raise AppError(
@@ -206,12 +224,17 @@ def register_child_voice(
     agree_transfer: bool = Form(description="[필수] ElevenLabs(미국) 국외 이전 동의"),
     guardian_consent: bool = Form(description="[필수] 법정대리인(보호자)으로서 아이 녹음에 동의"),
     consent_version: str = Form(max_length=20, description="동의한 안내문 판"),
+    ref_text: str | None = Form(
+        default=None,
+        max_length=500,
+        description="녹음에서 읽은 글 그대로 (선택). 녹음 목소리가 qwen 이면 더 닮게 만든다",
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> GuardianVoiceResponse:
     if not (agree_collect and agree_transfer and guardian_consent):
         raise AppError("CONSENT_REQUIRED", "필수 항목에 모두 동의해야 목소리를 등록할 수 있어요.")
-    return _register(request, audio, consent_version, db, user, CHILD)
+    return _register(request, audio, consent_version, db, user, CHILD, ref_text)
 
 
 @child_router.delete(
