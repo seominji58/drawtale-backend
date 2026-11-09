@@ -100,3 +100,9 @@ def test_retag_rules():
 )
 def test_negated_mood_words_are_not_chosen(text, action):
     assert liven(_book(("result", "idle", text))).pages[0].action == action
+
+
+@pytest.mark.parametrize("text", ["한 걸음, 또 한 걸음. 천천히 해 보았어요.", "친구를 따라갔어요.", "숲길을 뚜벅뚜벅 걸었어요."])
+def test_walking_words_make_idle_page_walk(text):
+    """걷는 글인데 가만히 쪽이면 제자리에 서 있었다 (11/9 테스트 2번) — 걷기로, 장면이 옮겨 간다"""
+    assert liven(_book(("action", "idle", text))).pages[0].action == "walk"
