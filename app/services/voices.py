@@ -61,6 +61,7 @@ def cast_voices(
     narrator_voice: str,
     speakers: Iterable[str] = (),
     voice_types: Mapping[str, Sequence[str]] = VOICE_TYPES,
+    sheet: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """인물 이름 → 목소리 id. 나레이터와 다른 인물과 겹치지 않게 고른다.
 
@@ -80,11 +81,43 @@ def cast_voices(
 
     voices = {NARRATOR: narrator_voice}
     voices[PROTAGONIST] = pick(PROTAGONIST_TYPES.get(protagonist, PROTAGONIST_TYPES["girl"]))
+    looks = {k.replace(" ", ""): v for k, v in (sheet or {}).items()}
     for name, kind in (*cast.items(), *((s, "") for s in speakers)):
         if name not in voices:
             kind = next((k for word, k in KIND_BY_NAME if word in name), kind)
+            if kind not in voice_types:
+                # 종류를 모르면(대본이 cast 에 빠뜨림 · 「친구 민지」처럼 이름이 다름) 이름 · 생김새(character_sheet)로 짐작한다.
+                # 전에는 아무 남은 목소리라 여자아이 등장인물이 어른 남자 목소리로 읽혔다 (11/10)
+                kind = guess_kind(name, looks.get(name.replace(" ", ""), ""))
             voices[name] = pick(kind)
     return voices
+
+
+_FEMALE = ("언니", "누나", "엄마", "이모", "고모", "할머니", "아주머니", "아줌마", "소녀", "여자", "공주", "선녀")
+_MALE = ("오빠", "형", "아빠", "삼촌", "할아버지", "아저씨", "소년", "남자", "왕자")
+_ADULT = ("엄마", "아빠", "이모", "고모", "삼촌", "아주머니", "아줌마", "아저씨", "선생님", "경찰", "요원", "선장", "의사",
+          "간호사", "안내원", "지킴이", "주인", "기사", "박사", "대장")
+_ANIMAL_SMALL = ("토끼", "다람쥐", "새", "참새", "병아리", "고양이", "강아지", "생쥐", "나비", "개구리", "물고기", "햄스터")
+_ANIMAL_BIG = ("곰", "사자", "코끼리", "호랑이", "공룡", "고래", "하마", "기린")
+
+
+def guess_kind(name: str, look: str = "") -> str:
+    """이름 · 영어 생김새로 목소리 종류를 짐작한다. 모르면 아이(여) — 이 책의 등장인물은 대개 아이 친구다."""
+
+    lk = look.lower()
+    if any(w in name for w in _ANIMAL_BIG) or any(w in lk for w in ("bear", "lion", "elephant", "tiger", "dinosaur", "whale")):
+        return "큰 동물"
+    if any(w in name for w in _ANIMAL_SMALL) or any(w in lk for w in ("rabbit", "bunny", "squirrel", "bird", "cat", "puppy", "dog", "mouse")):
+        return "작은 동물"
+    female = any(w in name for w in _FEMALE) or any(w in lk for w in ("girl", "woman", "mother", "grandma", "lady", "she ", "her "))
+    male = any(w in name for w in _MALE) or any(w in lk for w in (" boy", "boy ", " man", "father", "grandpa", "he ", "his "))
+    adult = any(w in name for w in _ADULT) or any(w in lk for w in ("woman", " man", "adult", "teacher", "mother", "father", "officer", "grown"))
+    if "grandma" in lk or "할머니" in name:
+        return "할머니"
+    if "grandpa" in lk or "할아버지" in name:
+        return "할아버지"
+    sex = "남" if male and not female else "여"
+    return f"{'어른' if adult else '아이'}-{sex}"
 
 
 def tagged(text: str, emotion: str) -> str:

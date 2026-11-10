@@ -839,7 +839,7 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
     speakers = [s for p in book.pages for s, _, _ in p.lines if s != NARRATOR]
     if story.voice_mode == VoiceMode.characters and speakers and _voice_types(tts):
         voices = cast_voices(
-            book.cast, story.protagonist_voice, tts.voice_id, speakers, _voice_types(tts)
+            book.cast, story.protagonist_voice, tts.voice_id, speakers, _voice_types(tts), book.character_sheet
         )
     # 목소리 배정: cast_out 이 있으면 거기에 (다른 스레드에서 돌 때 DB 객체를 고치지 않게), 없으면 story 에 바로
     if cast_out is not None:
