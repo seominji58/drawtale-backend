@@ -250,7 +250,7 @@ def register_child_voice(
     agree_collect: bool = Form(description="[필수] 아이 목소리 수집 · 이용 동의"),
     agree_transfer: bool = Form(description="[필수] ElevenLabs(미국) 국외 이전 동의"),
     guardian_consent: bool = Form(description="[필수] 법정대리인(보호자)으로서 아이 녹음에 동의"),
-    consent_version: str = Form(max_length=20, description="동의한 안내문 판"),
+    consent_version: str = Form(max_length=40, description="동의한 안내문 판"),
     ref_text: str | None = Form(
         default=None,
         max_length=500,
