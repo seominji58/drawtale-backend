@@ -1,0 +1,277 @@
+import uuid
+from datetime import datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, Field, field_validator
+
+from app.schemas.common import JobStatus
+
+
+class VoiceMode(StrEnum):
+    """S-13 「읽어주기」. 나레이터 하나로 읽을지, 대사를 등장인물 목소리로 읽을지."""
+
+    narration = "narration"
+    characters = "characters"
+
+
+class ProtagonistVoice(StrEnum):
+    """S-13 「주인공 목소리」. 캐릭터 목소리 판에서 주인공 「나」의 대사를 읽는 목소리."""
+
+    girl = "girl"
+    boy = "boy"
+
+
+class Narrator(StrEnum):
+    """S-13 「내 목소리로 읽어주기」 (2026-11-02).
+
+    guardian 이면 로그인한 보호자가 등록한 목소리로 나레이션을 읽는다.
+
+    목소리가 없거나 로그인하지 않았으면 기본 나레이터로 읽는다 (아이 흐름을 막지 않는다).
+    """
+
+    default = "default"
+    guardian = "guardian"
+    # 보호자가 등록한 아이 목소리 (2026-11-09, 시연용). 없으면 기본
+    child = "child"
+
+
+class StoryLength(StrEnum):
+    """이야기 길이.
+
+    short: 네 칸 → 네 문장 · long: 네 칸을 뼈대로 쪽 단위 그림책 (services/book.py)
+    """
+
+    short = "short"
+    long = "long"
+
+
+class Stage(StrEnum):
+    place = "place"
+    problem = "problem"
+    action = "action"
+    result = "result"
+
+
+class StoryExtras(BaseModel):
+    """네 칸 사이에 더 받는 칸. 카드 라벨만 온다 (아이 말 · 이름은 받지 않는다).
+
+    2026-10-27 로컬 시험 — 회의에서 빼면 지운다 (프론트 open-decisions 0-11).
+    """
+
+    who: str | None = Field(default=None, max_length=20, examples=["강아지"])
+    feel_problem: str | None = Field(default=None, max_length=20, examples=["무서웠어요"])
+    feel_result: str | None = Field(default=None, max_length=20, examples=["기뻤어요"])
+
+
+class StoryCreateRequest(BaseModel):
+    character_id: uuid.UUID
+    place: str = Field(min_length=1, max_length=50, examples=["학교"])
+    problem: str = Field(min_length=1, max_length=50, examples=["친구와 다퉜어요"])
+    action: str = Field(min_length=1, max_length=50, examples=["먼저 사과해요"])
+    result: str = Field(min_length=1, max_length=50, examples=["다시 사이좋게 놀아요"])
+    voice_mode: VoiceMode = Field(
+        default=VoiceMode.narration,
+        description=(
+            "narration: 나레이터 하나 · "
+            "characters: 대사를 인물 목소리로 (이야기 글에 대사가 들어간다)"
+        ),
+    )
+    protagonist_voice: ProtagonistVoice = Field(
+        default=ProtagonistVoice.girl,
+        description="캐릭터 목소리 판에서 주인공 대사 목소리. girl: 여자아이 · boy: 남자아이",
+    )
+    protagonist_name: str | None = Field(
+        default=None,
+        max_length=10,
+        examples=["토토"],
+        description=(
+            "아이가 지은 주인공 이름. 캐릭터 목소리 판의 나레이션이 이 이름으로 3인칭으로 부른다. "
+            "나레이션 판에서도 받아 저장하지만 글에는 쓰지 않는다 (「나는」)"
+        ),
+    )
+    length: StoryLength = Field(
+        default=StoryLength.short,
+        description=(
+            "short: 네 문장 (지금까지) · long: 쪽 단위 그림책. 쪽 수는 서버 설정 STORY_PAGES"
+        ),
+    )
+    spoken: list[Stage] = Field(
+        default_factory=list,
+        description=(
+            "카드 글자 대신 아이가 말로 덧붙인 말을 보낸 단계. "
+            "long 이면 대본이 그 말을 그대로 살리고 "
+            "그 쪽에 child_words 로 표시한다"
+        ),
+    )
+    extras: StoryExtras | None = Field(
+        default=None,
+        description=(
+            "함께 나오는 인물 · 문제 때 기분 · 마지막 기분 카드. long 대본에만 쓴다 (시험)"
+        ),
+    )
+    narrator: Narrator = Field(
+        default=Narrator.default,
+        description=(
+            "guardian: 보호자가 등록한 목소리로 나레이션 (로그인 · 목소리 등록 필요, 없으면 기본). "
+            "child: 보호자가 등록한 아이 목소리로 (2026-11-09, 없으면 기본). "
+            "캐릭터 목소리 판에서도 나레이터만 바뀌고 인물 대사 목소리는 그대로"
+        ),
+    )
+
+
+class BookLine(BaseModel):
+    speaker: str
+    text: str
+    emotion: str = ""
+
+
+class BookSceneCharacter(BaseModel):
+    name: str
+    slot: str = Field(description="right-middle · right-bottom")
+
+
+class BookScene(BaseModel):
+    hero_on_page: bool = True
+    characters: list[BookSceneCharacter] = Field(default_factory=list)
+    background: str = ""
+    location: str = Field(default="", description="장소 안 세부 장소 id (SCENE_LOCATIONS). 비면 화면이 글로 짐작")
+
+
+class BookPage(BaseModel):
+    page: int
+    stage: Stage
+    action: str = Field(
+        description="그 쪽에서 캐릭터가 하는 동작: idle · walk · run · jump · wave · dance"
+    )
+    text: str = Field(description="화면에 보일 글. 대사는 “ ” 로 감쌌다")
+    child_words: str = Field(
+        default="", description="이 쪽에 그대로 들어간 아이 말. 없으면 빈 문자열"
+    )
+    lines: list[BookLine]
+    audio_url: str | None = Field(
+        default=None, description="이 쪽 MP3. 없으면 프론트가 브라우저 TTS 로 읽는다"
+    )
+    animation_url: str | None = Field(
+        default=None,
+        description=(
+            "이 쪽 동작 MP4 (동작이 같은 쪽은 같은 파일). idle 이거나 렌더를 못 했으면 없다"
+        ),
+    )
+    sprite_url: str | None = Field(
+        default=None,
+        description=(
+            "이 쪽 동작의 바탕이 투명한 프레임 묶음 WebP (2026-11-03). "
+            "정사각 칸을 가로 8칸씩 줄 바꿔 늘어놓았다 — 프론트 S-09 가 장면 배경 · 물건과 "
+            "층으로 쌓는다. 예전 이야기 · 예전 AI 서버면 없다(MP4 로)"
+        ),
+    )
+    sprite_frames: int | None = Field(
+        default=None,
+        description="sprite_url 의 실제 프레임 수 (마지막 줄 빈 칸 제외). 화면이 다른 주소 그림의 픽셀을 못 읽어 서버가 알려 준다",
+    )
+    sprite_box: list[float] | None = Field(
+        default=None,
+        description="첫 프레임에서 그림이 차지하는 자리 [왼, 위, 오른, 아래] — 칸 대비 0~1. 발끝 맞추기 · 크기 맞추기에 쓴다",
+    )
+    scene: BookScene | None = Field(
+        default=None, description="대본이 정한 장면 계획. 저장해 둔 카드 이야기 · 예전 이야기는 없을 수 있다"
+    )
+
+
+class Book(BaseModel):
+    title: str
+    pages: list[BookPage]
+    order_pages: list[int] = Field(
+        description="S-10 순서 맞추기에 쓸 쪽 번호. 장소 · 문제 · 행동 · 결과 순"
+    )
+    character_sheet: dict[str, str] = Field(
+        default_factory=dict, description="장면에 나오는 인물 이름 → 영어 생김새 (쪽마다 같은 모습)"
+    )
+
+
+class StoryCreateResponse(BaseModel):
+    story_id: uuid.UUID
+    job_id: uuid.UUID
+    status: JobStatus
+
+
+class StoryResponse(BaseModel):
+    id: uuid.UUID
+    character_id: uuid.UUID
+    status: JobStatus
+    place: str
+    problem: str
+    action: str
+    result: str
+    voice_mode: VoiceMode
+    protagonist_voice: ProtagonistVoice
+    protagonist_name: str | None
+    title: str | None = Field(
+        default=None, description="아이 · 보호자가 정한 책 제목 (PATCH /stories/{id}). 없으면 null — 화면이 book.title · 「{장소}에 간 날」"
+    )
+    length: StoryLength
+    narrator: Narrator = Field(
+        default=Narrator.default, description="실제로 읽은 나레이터. guardian 이면 보호자, child 면 아이 목소리"
+    )
+    book: Book | None = Field(
+        default=None, description="length=long 일 때만. text 는 쪽 글을 이어 붙인 것"
+    )
+    text: str | None
+    audio_url: str | None
+    animation_url: str | None
+    still_url: str | None = Field(
+        default=None,
+        description="배경을 잘라 낸 캐릭터 정지 그림. 영상이 없는 쪽 · 완료 화면 · 표지",
+    )
+    still_hands: dict[str, list[float]] | None = Field(
+        default=None,
+        description="정지 그림 안 주인공 손 위치 {l, r: [x, y]} 0~1 (l 은 그림 왼쪽). 대본에서 주인공이 든 소품을 손에. 예전 이야기는 없음",
+    )
+    still_body: dict[str, list[float]] | None = Field(
+        default=None,
+        description="4족형 정지 그림 안 입 · 머리 꼭대기 · 등 자리 {mouth, head, back: [x, y]} 0~1 (그림 기준, 뒤집기 전). 사람 · 예전 이야기는 없음",
+    )
+    hero_form: str | None = Field(default=None, description="주인공 형태 (GET /api/v1/forms 의 id). 캐릭터가 없으면 없음")
+    hero_facing: str | None = Field(
+        default=None,
+        description="옆모습 형태(4족형)의 머리 쪽 left · right — 렌더는 머리 쪽으로 걷는다. 반대쪽으로 옮겨 갈 때 화면이 좌우로 뒤집는다. 2족형은 없음",
+    )
+    sprite_url: str | None = Field(
+        default=None, description="짧은 이야기: animation_url 동작의 바탕이 투명한 프레임 묶음 (긴 이야기는 쪽마다 book.pages)"
+    )
+    sprite_frames: int | None = Field(default=None, description="sprite_url 의 장 수")
+    sprite_box: list[float] | None = Field(default=None, description="sprite_url 첫 장의 그림 자리 [왼, 위, 오른, 아래] 0~1")
+    action_motion: str = Field(
+        default="wave", description="행동 카드의 동작 (walk · run · jump · dance · wave) — 짧은 이야기를 쪽으로 나눠 보일 때 행동 쪽 동작"
+    )
+    created_at: datetime
+    updated_at: datetime
+
+
+class StoryUpdateRequest(BaseModel):
+    """책 제목 바꾸기 (S-11 · S-12 · S-13)."""
+
+    title: str = Field(min_length=1, max_length=20, description="책 제목. 앞뒤 빈칸은 뺀다")
+
+    @field_validator("title")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("제목이 비었어요")
+        return v
+
+
+class ActivityCreateRequest(BaseModel):
+    """S-10 순서 맞추기 한 번의 결과."""
+
+    attempts: int = Field(ge=1, le=100, description="「다 했어요」를 누른 횟수 (맞힌 마지막 포함)")
+    completed: bool = Field(description="맞히고 S-11 로 갔는지")
+    card_count: int = Field(ge=2, le=4, description="놓은 문장 카드 수")
+    level: int | None = Field(default=None, ge=1, le=3, description="지원 수준")
+
+
+class ActivityResponse(ActivityCreateRequest):
+    id: uuid.UUID
+    story_id: uuid.UUID
+    created_at: datetime
