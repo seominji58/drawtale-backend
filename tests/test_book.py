@@ -229,6 +229,14 @@ def test_body_problems_catches_winged_hero_walking_and_hands(text):
     "나는 무서워서 몸을 작게 웅크렸어요.",
     "나는 쪼그리고 숨었어요.",
     "나는 기뻐서 빙글빙글 돌았어요.",
+    # 운영 DB 1,021편 다시 검사의 거짓 걸림 (11/10): 남의 손 · 아니라는 말 · 같다는 말 · 물건이 주어 · 분
+    "친구 손에는 터진 풍선 조각만 남아 있었어요.",
+    "엄마 손이 내 등을 토닥토닥 쓸어 주었어요.",
+    "나는 손 대신 날개를 살랑살랑 흔들었어요.",
+    "나는 손을 흔드는 대신 온몸을 흔들었어요.",
+    "그리고 손을 흔들듯 몸을 살랑살랑 흔들었어요.",
+    "화살표가 반짝, 놀이터 쪽을 가리키고 있었어요.",
+    "책을 안고 오시는 분은 도서관 선생님이었어요.",
 ])
 def test_body_problems_skips_other_people_and_other_meanings(text):
     assert body_problems(_book(text), WINGED) == []

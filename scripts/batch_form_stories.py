@@ -297,7 +297,19 @@ def page_text(p: dict) -> str:
     return p["text"] if "text" in p else " ".join(line["text"] for line in p["lines"])
 
 
-def check_saved(form: str, from_db: bool) -> None:
+def moderate_slow(writer, text: str) -> list[str]:
+    """내용 검사 (OpenAI moderation, 무료). 몇백 편을 한꺼번에 부르면 429 가 나서 쉬어 가며 다시 (11/10)"""
+    import openai
+
+    for k in range(6):
+        try:
+            return B.moderate(writer, text)
+        except openai.RateLimitError:
+            time.sleep(2 ** k * 2)
+    return ["내용 검사를 못 함 (429)"]
+
+
+def check_saved(form: str, from_db: bool, file: str | None = None, moderation: bool = True) -> None:
     """이미 만든 대본을 지금 검사로 다시 본다 (11/10 사용자 「기존 만들어 둔 비휴머노이드 대본들 검사해 봐」).
     jsonl(storage/card_stories/form-{형태}.jsonl) 또는 --from-db 면 card_stories 표. 검사는 쓰기와 같다(쪽 배치 · 카드 · 첫 쪽 자리 ·
     모를 어른 · 내용 · 몸 규칙). 무료 (내용 검사는 OpenAI moderation). 결과는 storage/card_stories/check-{형태}.json"""
@@ -309,6 +321,8 @@ def check_saved(form: str, from_db: bool) -> None:
         with SessionLocal() as db:
             rows = [{"place": r.place, "problem": r.problem, "action": r.action, "result": r.result, "payload": r.payload,
                      "status": r.status} for r in db.query(CardStory).filter_by(form=form, length="long", voice_mode="narration")]
+    elif file:   # 다른 곳에서 꺼낸 jsonl (운영 DB 를 SSH 로 읽은 것 등, 줄마다 카드 네 칸 · payload · status)
+        rows = [json.loads(line) for line in Path(file).read_text(encoding="utf-8").splitlines() if line.strip()]
     else:
         rows = list(load(form).values())
     writer = get_story_writer()
@@ -324,7 +338,8 @@ def check_saved(form: str, from_db: bool) -> None:
                 problems.append(f"첫 쪽에 자리 「{cs.spot_for(c)}」가 없다")
             if B.UNKNOWN_ADULT.search(book.text()) and not B.KNOWN_ROLE.search(book.text()):
                 problems.append("누구인지 모를 어른")
-            problems += B.moderate(writer, book.text())
+            if moderation:
+                problems += moderate_slow(writer, book.text())
         except (ValueError, KeyError, TypeError) as e:
             problems = [f"형식 오류 {e}"]
         for x in problems:
@@ -376,10 +391,12 @@ if __name__ == "__main__":
     ap.add_argument("--no-review", action="store_true")
     ap.add_argument("--check", action="store_true", help="이미 만든 대본을 지금 검사로 다시 보기 (무료)")
     ap.add_argument("--from-db", action="store_true", help="--check 를 card_stories 표에서")
+    ap.add_argument("--file", help="--check 를 이 jsonl 에서")
+    ap.add_argument("--no-moderate", action="store_true", help="--check 에서 내용 검사(OpenAI) 빼기")
     a = ap.parse_args()
     start = time.time()
     if a.check:
-        check_saved(a.form, a.from_db)
+        check_saved(a.form, a.from_db, a.file, not a.no_moderate)
     elif a.load:
         load_db(a.form, a.approve_clean)
     else:

@@ -488,8 +488,21 @@ _OTHERS = (
     "친구|친구들|엄마|아빠|선생님|할머니|할아버지|아기[가-힣]{0,2}|아이|아이들|언니|오빠|누나|형|동생|아저씨|아줌마|아주머니|"
     "어른|어른들|이모|삼촌|가족|사람|사람들|경찰관|경찰|소방관|의사|간호사|기사님|점원|직원|사장님|왕자|공주|요정|로봇|유령|외계인|"
     "공룡|괴물|강아지|고양이|토끼|곰|다람쥐|오리|개구리|새|새들|나비|사슴|여우|원숭이|코끼리|사자|호랑이|펭귄|거북|거북이|"
-    "달팽이|개미|벌|물고기|고래|문어|해파리|부엉이|올빼미|참새|비둘기|병아리|닭|돼지|기린|하마|악어|뱀|용|가슴|심장|마음|모두|누군가"
+    "달팽이|개미|벌|물고기|고래|문어|해파리|부엉이|올빼미|참새|비둘기|병아리|닭|돼지|기린|하마|악어|뱀|용|가슴|심장|마음|모두|누군가|분"
 )
+# 운영 DB 4족 · 사슬형 1,021편 다시 검사에서 나온 거짓 걸림 (11/10):
+# 「친구 손에는 · 엄마 손이」(남의 손), 「손 대신 꼬리를 · 손을 흔드는 대신 · 손을 흔들듯」(아니라는 말 · 같다는 말),
+# 「화살표가 … 가리키고」(물건이 주어). 주어는 사람 낱말이 아니어도 「~이 · ~가」면 주인공이 아닌 것으로 본다
+_NOT_REALLY = re.compile(r"^[^.!?,]{0,10}?(?:대신|듯)")
+_SUBJ_GA = re.compile(r"(?<![가-힣])[가-힣]{1,8}?(?<!나)(?<!내)(?:이|가)(?=\s)")
+# 앞 마디의 주어는 다음 마디로 넘어가지 않는다: 「바람이 불자 발길을 멈췄어요」의 바람은 「불자」에서 끝난다
+_CLAUSE_END = re.compile(r"(?:자|니|면|서|고|며|는데|지만|더니)\s")
+# 몸 낱말(손 · 발밑 · 발걸음 · 어깨 …)은 문장 주어가 따로 있어도 주인공 몸이다 (「모래가 발밑에서」 · 「마음이 편해져서 발걸음도」).
+# 이런 낱말은 남의 것(친구 손)일 때만 넘어가고, 「~이 · ~가」 주어로는 넘어가지 않는다
+_BODY_NOUN = re.compile(r"^(?:손|팔|어깨|무릎|발|두 발|내 발|걸음|꼬리)")
+# 움직임이 뒤 사람 낱말을 꾸미면 그 사람의 움직임: 「책을 안고 오시는 분은」
+_MODIFIES = re.compile(r"^[^.!?,]{0,12}?(?:는|던|ㄴ)\s(?:분|사람|아이|친구|어른|아저씨|아주머니|언니|오빠|누나|형|동생)")
+_NOT_SUBJ = {"그때", "정말", "이제", "다시", "같이", "높이", "깊이", "많이", "가만히", "조용히", "천천히", "살며시", "드디어", "누가", "어디", "얼마"}
 _PARTICLE = r"(?:이가|이는|이도|이|가|은|는|도|께서)(?![가-힣])"
 _QUOTE = re.compile(r"[“\"][^”\"]*[”\"]")
 
@@ -515,9 +528,14 @@ def body_problems(book: Book, form: dict | None) -> list[str]:
             for sent in _SENT.findall(_QUOTE.sub(" ", text) + "."):
                 for pattern in banned:
                     for m in re.finditer(pattern, sent):
-                        before = sent[: m.start()]
+                        before, after = sent[: m.start()], sent[m.end():]
+                        if _NOT_REALLY.match(after) or _MODIFIES.match(after) or re.search(r"(?<![가-힣])(?:" + "|".join([*names, _OTHERS]) + r")\s*$", before):
+                            continue
                         last_hero = max((x.end() for x in hero.finditer(before)), default=-1)
-                        last_other = max((x.end() for x in other.finditer(before)), default=-1)
+                        subj = [x.end() for x in other.finditer(before)]
+                        if not _BODY_NOUN.match(m.group(0)):
+                            subj += [x.end() for x in _SUBJ_GA.finditer(before) if x.group(0)[:-1] not in _NOT_SUBJ]
+                        last_other = max([e for e in subj if not _CLAUSE_END.search(before[e:])], default=-1)
                         if last_other > last_hero:
                             continue
                         found.append(m.group(0).strip())
