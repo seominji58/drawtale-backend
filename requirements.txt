@@ -8,6 +8,8 @@ alembic==1.20.0
 httpx==0.28.1
 python-multipart==0.0.32
 pillow==13.0.0
+# 목소리 소리 크기 맞추기용 ffmpeg (실행 파일이 패키지에 들어 있다, 11/10)
+imageio-ffmpeg==0.8.1
 
 # 이야기 생성 · Moderation
 openai==3.20.0

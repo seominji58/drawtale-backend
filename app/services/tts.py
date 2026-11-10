@@ -6,6 +6,7 @@ API 키가 없거나 호출이 실패하면 음성 없이 진행한다 (이야�
 
 import base64
 import logging
+import subprocess
 
 import httpx
 from openai import OpenAI
@@ -28,6 +29,31 @@ VOICE_INSTRUCTIONS = (
 )
 
 
+# ---- 소리 크기 맞추기 (11/10 사용자 「등장인물 ElevenLabs 목소리가 훨씬 크게 들려 크기 차이가 난다」) ----
+# 등록한 보호자 · 아이 목소리는 녹음한 크기를 따라가 작고, ElevenLabs 기본 목소리(등장인물)는 크게 다듬어져 나온다.
+# 한 파일 안의 나레이션 · 대사 크기를 고르게(dynaudnorm) 한 뒤 전체를 같은 크기(-16 LUFS, 말소리 표준)로 맞춘다.
+# ffmpeg 는 imageio-ffmpeg 패키지에 든 것을 쓴다 (이미지에 따로 설치하지 않게). 실패하면 원래 소리 그대로
+LOUDNESS_FILTER = "dynaudnorm=f=200:g=11:p=0.9:m=4,loudnorm=I=-16:TP=-1.5:LRA=11"
+
+
+def even_loudness(mp3: bytes) -> bytes:
+    if not mp3 or len(mp3) < 1024:
+        return mp3
+    try:
+        import imageio_ffmpeg
+
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        out = subprocess.run(
+            [exe, "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-af", LOUDNESS_FILTER,
+             "-ar", "44100", "-codec:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"],
+            input=mp3, capture_output=True, timeout=90, check=True,
+        ).stdout
+        return out if len(out) > 1024 else mp3
+    except Exception as exc:  # noqa: BLE001 — 크기 맞추기는 덤이라 실패해도 원래 소리로 읽는다
+        log.warning("소리 크기 맞추기 실패, 원래 소리로: %s", exc)
+        return mp3
+
+
 class TextToSpeech:
     def __init__(self, api_key: str, timeout: float = 60.0) -> None:
         self.client = OpenAI(api_key=api_key, timeout=timeout)
@@ -43,7 +69,7 @@ class TextToSpeech:
             instructions=VOICE_INSTRUCTIONS,
             response_format="mp3",
         )
-        return res.content
+        return even_loudness(res.content)
 
 
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
@@ -104,7 +130,7 @@ class ElevenLabsSpeech:
                 },
             )
             res.raise_for_status()
-            return res.content
+            return even_loudness(res.content)
 
     def dialogue(self, lines: list[Line], voices: dict[str, str]) -> bytes:
         """나레이션은 나레이터, 대사는 인물 목소리로 MP3 하나를 만든다.
@@ -132,7 +158,7 @@ class ElevenLabsSpeech:
                 },
             )
             res.raise_for_status()
-            return res.content
+            return even_loudness(res.content)
 
 
 # ---- 녹음 목소리: 자체 서버 drawtale-tts (Qwen3-TTS, 2026-11-09) ----
@@ -183,7 +209,7 @@ class QwenSpeech:
         with _qwen_client() as http:
             res = http.post(path, json=body)
             res.raise_for_status()
-            return res.content
+            return even_loudness(res.content)
 
     def speak(self, text: str) -> bytes:
         return self._post("/internal/v1/tts", {"voice_id": self.voice_id, "text": text})
@@ -206,7 +232,7 @@ class QwenSpeech:
         with _qwen_client() as http:
             res = http.post("/internal/v1/dialogue", json=body)
             res.raise_for_status()
-            return res.content
+            return even_loudness(res.content)
 
 
 class VoiceRejected(Exception):
