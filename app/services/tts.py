@@ -280,26 +280,32 @@ ELEVENLABS_ADD_VOICE_URL = "https://api.elevenlabs.io/v1/voices/add"
 ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/v1/voices/{voice_id}"
 
 
-def voice_provider() -> str:
-    """새로 등록하는 녹음 목소리를 어디로 보내나 — 동의 화면이 받는 곳을 이것으로 보여 준다 (2026-11-10)."""
+def voice_provider(kind: str = "guardian") -> str:
+    """새로 등록하는 녹음 목소리를 어디로 보내나 — 동의 화면이 받는 곳을 이것으로 보여 준다 (2026-11-10).
 
-    return "qwen" if get_settings().guardian_voice_provider == "qwen" else "elevenlabs"
+    kind: guardian(보호자) | child(아이). 아이는 CHILD_VOICE_PROVIDER 가 있으면 그것, 없으면 보호자와 같다.
+    """
+
+    s = get_settings()
+    chosen = (s.child_voice_provider or s.guardian_voice_provider) if kind == "child" else s.guardian_voice_provider
+    return "qwen" if chosen == "qwen" else "elevenlabs"
 
 
-def voice_cloning_ready() -> bool:
+def voice_cloning_ready(kind: str = "guardian") -> bool:
     """녹음 목소리를 받을 수 있는지.
 
     qwen: drawtale-tts 주소 · 토큰이 있을 때. elevenlabs: ElevenLabs 로 읽고 키가 있을 때.
     """
 
     s = get_settings()
-    if s.guardian_voice_provider == "qwen":
+    if voice_provider(kind) == "qwen":
         return _qwen_ready()
     return s.tts_provider == "elevenlabs" and bool(s.elevenlabs_api_key)
 
 
 def add_voice(
-    name: str, audio: bytes, filename: str, content_type: str, ref_text: str | None = None
+    name: str, audio: bytes, filename: str, content_type: str, ref_text: str | None = None,
+    kind: str = "guardian",
 ) -> str:
     """녹음으로 목소리를 만들고 그 id 를 돌려준다.
 
@@ -308,7 +314,7 @@ def add_voice(
     """
 
     s = get_settings()
-    if s.guardian_voice_provider == "qwen":
+    if voice_provider(kind) == "qwen":
         return _qwen_add_voice(audio, filename, content_type, ref_text)
     with httpx.Client(timeout=s.tts_timeout_seconds * 2, transport=_TRANSPORT) as http:
         res = http.post(

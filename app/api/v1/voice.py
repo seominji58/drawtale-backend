@@ -52,12 +52,12 @@ def _row(db: Session, user: User, kind: str = GUARDIAN) -> GuardianVoice | None:
     )
 
 
-def _response(row: GuardianVoice | None) -> GuardianVoiceResponse:
+def _response(row: GuardianVoice | None, kind: str = GUARDIAN) -> GuardianVoiceResponse:
     active = row is not None and row.elevenlabs_voice_id is not None
     return GuardianVoiceResponse(
         registered=active,
-        available=tts.voice_cloning_ready(),
-        provider=tts.voice_provider(),
+        available=tts.voice_cloning_ready(kind),
+        provider=tts.voice_provider(kind),
         consent_version=row.consent_version if active else None,
         consented_at=row.consented_at if active else None,
     )
@@ -132,7 +132,7 @@ def _register(
     kind: str,
     ref_text: str | None = None,
 ) -> GuardianVoiceResponse:
-    if not tts.voice_cloning_ready():
+    if not tts.voice_cloning_ready(kind):
         raise AppError("VOICE_UNAVAILABLE", "지금은 목소리를 등록할 수 없어요.", 503)
     rate_limit.check("voice", request, user)
     content_type = (audio.content_type or "").split(";")[0]
@@ -152,6 +152,7 @@ def _register(
             audio.filename or "voice.wav",
             content_type,
             ref_text=(ref_text or "").strip() or None,
+            kind=kind,
         )
     except tts.VoiceRejected as e:
         # 녹음 탓 — 무엇을 고쳐 다시 녹음하면 되는지 알려 준다
@@ -176,7 +177,7 @@ def _register(
     row.consented_at = utcnow()
     row.withdrawn_at = None
     db.commit()
-    return _response(row)
+    return _response(row, kind)
 
 
 @router.delete(
@@ -208,7 +209,7 @@ def _delete(db: Session, user: User, kind: str) -> Response:
 def get_child_voice(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> GuardianVoiceResponse:
-    return _response(_row(db, user, CHILD))
+    return _response(_row(db, user, CHILD), CHILD)
 
 
 @child_router.post(

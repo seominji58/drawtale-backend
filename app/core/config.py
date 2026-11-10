@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     #   | "qwen" (자체 서버 drawtale-tts). qwen 이면 녹음 목소리는 나레이션만 읽고,
     #   기본 나레이터와 캐릭터 대사는 그대로 TTS_PROVIDER(ElevenLabs)가 읽는다
     guardian_voice_provider: str = "elevenlabs"
+    # 아이 목소리만 따로 (2026-11-10): 비우면 GUARDIAN_VOICE_PROVIDER 를 따른다.
+    #   보호자는 ElevenLabs(빠름), 아이는 qwen 처럼 나눌 때 — ElevenLabs 는 만 18세 미만 음성을 받지 않는다
+    child_voice_provider: str = ""
     # drawtale-tts 주소 (modal deploy 가 알려 준 주소) 와 Bearer 토큰. 토큰은 여기에만 둔다
     qwen_tts_url: str = ""
     qwen_tts_token: str = ""
