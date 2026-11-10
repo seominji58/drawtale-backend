@@ -205,8 +205,6 @@ def _book(*texts, protagonist="", cast=None, lines=None):
     "친구가 울자 나는 손가락으로 길을 가리켰어요.",
     "나는 천천히 다시 걸어도 괜찮았어요.",
     "선생님 곁에서 콩콩, 운동장으로 함께 갔어요.",
-    "나는 의자에 앉아 쉬었어요.",
-    "엄마 곁에 앉으니 마음이 놓였어요.",
     "나는 날개를 멈추고 귀를 쫑긋 세웠어요.",
 ])
 def test_body_problems_catches_winged_hero_walking_and_hands(text):
@@ -234,6 +232,24 @@ def test_body_problems_catches_winged_hero_walking_and_hands(text):
 ])
 def test_body_problems_skips_other_people_and_other_meanings(text):
     assert body_problems(_book(text), WINGED) == []
+
+
+def test_sitting_is_for_winged_only():
+    """날개형은 앉아 쉬기를 쓴다 (11/10 사용자 「앉기는 허용해」, 새는 옆모습만). 지느러미형 · 사슬형은 그대로 못 앉는다"""
+    sit = _book("나는 의자에 앉아 쉬었어요.", "엄마 곁에 앉으니 마음이 놓였어요.")
+    assert body_problems(sit, WINGED) == []
+    assert [x[:2] for x in body_problems(sit, {"id": "finned"})] == ["1쪽", "2쪽"]
+    assert body_problems(_book("나는 바위 위에 사뿐히 내려앉았어요."), {"id": "finned"}) == []
+
+
+def test_prompt_rules_from_review():
+    """Opus 검수 지적(11/10 날개형 20편)을 지시문으로: 되풀이 · 카드 낱말 · 대사 속 카드 · 앞뒤 · 위험 · 끊긴 배경, 바닷속 잠수부"""
+    prompt = book_prompt(8, False, None, place="바다")
+    for words in ("다시 쓰지 않는다", "다른 말로 바꾸지 않는다", "다른 대사 안에도 넣지 않는다", "앞뒤를 맞춘다",
+                  "꼭대기에 올라가거나", "미끄러운 곳에서 빠르게", "background 문장은 끝까지", "잠수복", "diving suit"):
+        assert words in prompt, words
+    assert "발걸음은 콩콩" not in prompt and "한 걸음, 또 한 걸음" not in prompt    # 걷는 예시는 날개 · 지느러미형에 걷기를 부른다
+    assert "잠수복" not in book_prompt(8, False, None, place="숲")
 
 
 def test_body_problems_by_form_and_speaker():

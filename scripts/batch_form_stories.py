@@ -24,8 +24,15 @@ import anthropic
 from app.core.config import get_settings
 from app.services import card_stories as cs
 from app.services import forms
-from app.services.book import OPENINGS, body_problems, book_prompt, book_user_message
-from app.services.story_writer import get_story_writer
+from app.services.book import (
+    OPENINGS,
+    body_problems,
+    body_rules,
+    book_prompt,
+    book_user_message,
+    form_words,
+)
+from app.services.story_writer import REPAIR, get_story_writer, json_part, merge_repair
 from scripts import batch_card_stories as B
 
 OUT = Path("storage/card_stories")
@@ -53,67 +60,230 @@ def request(c: cs.Combo, hero: dict) -> dict:
     return base
 
 
-def run(form: str, limit: int | None, budget: float) -> None:
+# 쓰는 모델 (11/10 날개형 20편 시험: Opus 검수 통과 Opus 10/19 · Sonnet 4/20). 배치라 반값 (백만 토큰당 입력, 출력)
+MODELS = {"opus": ("claude-opus-5-5", (2.0, 10.0)), "sonnet": ("claude-sonnet-5-5", (1.0, 5.0))}
+REVIEW_MODEL, REVIEW_PRICE = "claude-opus-5-5", (2.0, 10.0)
+# 한 편 어림 (11/10 실측: 쓰기 · 절반쯤 고치기 · 검수 · 절반쯤 검수 고치기)
+PER_STORY = {"opus": 0.09, "sonnet": 0.04}
+
+# 검수 (11/10 사용자 「검수 단계도 붙여」). 자동 검사가 못 보는 것: 카드 뜻 · 몸 규칙 · 위험 · 장면 · 어색함.
+# 지적이 있으면 그 쪽만 한 번 고친다 (REPAIR 와 같은 방식). 다시 검수하지는 않는다 (고친 뒤 자동 검사만)
+REVIEW = """너는 느린 아이들을 위한 그림책 대본 검수자야. 아래 대본을 읽고 고칠 것만 찾는다. 사소한 말맛 차이는 넘어간다.
+
+[카드] 장소 「{place}」, 문제 「{problem}」, 행동 「{action}」, 결과 「{result}」. 각 단계 쪽(stage)이 이 카드 뜻을 그대로 지켜야 한다 (뜻을 뒤집거나 비틀면 고칠 것)
+[주인공 모습] 주인공 「나」는 {kind}이다. 아래 몸 규칙을 어기면 고칠 것:
+{body}
+[보는 것]
+1. 카드 뜻: 행동 · 결과를 바꾸거나(도와줬어요 → 도움을 요청) 빠뜨림
+2. 몸 규칙: 주인공이 할 수 없는 몸짓(손으로 잡기 · 손 흔들기 · 팔 …)
+3. 위험 · 무서움: 아이가 따라 하면 다칠 일, 피 · 상처를 자세히, 무서운 장면
+4. 장면 계획(scene): 행동 · 결과 쪽에 주인공이 빠짐, 대본에 없는 인물, 배경 지시문에 글자 · 간판 · 끊긴 문장
+5. 어색함: 쪽 사이 이야기가 끊김, 같은 말 되풀이, 카드 글자를 따옴표 대사로 그대로 넣음
+JSON 으로만 답한다: {{"verdict": "pass" 또는 "fix", "issues": [{{"page": 쪽 번호, "kind": "카드|몸|위험|장면|어색", "note": "짧게"}}]}}"""
+
+
+def work_path(form: str) -> Path:
+    """단계 사이에 남기는 것 (배치 id · 편마다 대본). 끊겨도 다시 돌리면 그 단계부터"""
+    return OUT / f"form-{form}-work.json"
+
+
+def check(c: cs.Combo, raw: str, hero: dict, writer) -> tuple[dict, list[str]]:
+    """사람형 카드 이야기와 같은 검사(쪽 배치 · 카드 · 첫 쪽 자리 · 모를 어른 · 내용) + 형태 몸 규칙"""
+    payload, problems = B.read_base(c, raw, writer)
+    return payload, problems + body_problems(cs.book_from_payload(payload, None), hero)
+
+
+def fix_params(model: str, c: cs.Combo, hero: dict, raw: str, problems: list[str]) -> dict:
+    """틀린 쪽(과 장면 계획)만 고쳐 받기 (story_writer.book_fix 와 같은 지시, effort low)"""
+    base = request(c, hero)
+    ask = REPAIR.format(problems="\n".join(f"- {x}" for x in problems))
+    return {"model": model, "max_tokens": 8000, "system": base["system"], "output_config": {"effort": "low"},
+            "messages": [base["messages"][0], {"role": "assistant", "content": raw}, {"role": "user", "content": ask}]}
+
+
+def review_params(c: cs.Combo, hero: dict, payload: dict) -> dict:
+    def scene(p: dict) -> str:
+        sc = p.get("scene")
+        if not sc:
+            return ""
+        who = [x.get("name") for x in sc.get("characters") or []]
+        # 배경 지시문은 자르지 않는다: 160 자로 잘라 보냈더니 검수가 「배경 지시문이 끊김」을 20편 중 15편에 달았다 (11/10)
+        return f"\n   장면: 주인공 {'있음' if sc.get('hero_on_page', True) else '없음'} · 인물 {who} · 배경 {sc.get('background', '')}"
+
+    pages = payload["book"]["pages"]
+    story = "\n".join(f"{p['page']}쪽 [{p['stage']}] {page_text(p)}{scene(p)}" for p in pages)
+    system = REVIEW.format(place=c.place, problem=c.problem, action=c.action, result=c.result,
+                           kind=form_words(hero)["kid_label"], body=body_rules(hero))
+    return {"model": REVIEW_MODEL, "max_tokens": 6000, "system": system, "output_config": {"effort": "low"},
+            "messages": [{"role": "user", "content": f"제목: {payload['book'].get('title', '')}\n{story}"}]}
+
+
+def run(form: str, limit: int | None, budget: float, model: str = "opus", review: bool = True) -> None:
+    """쓰기 → 자동 검사 → 틀린 쪽만 고치기 → Opus 검수 → 지적한 쪽 고치기 (모두 배치, 11/10).
+    전에는 검사에 걸리면 그 편을 버리고 다음에 처음부터 다시 썼다 (고치기보다 2~3배 비쌈)"""
     hero = forms.get(form)
     if (hero.get("id") or form) != form:
         raise SystemExit(f"AI 서버에서 형태 {form} 을(를) 받지 못했습니다")
     rows_path, state_path = paths(form)
     OUT.mkdir(parents=True, exist_ok=True)
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {"failed": {}, "spent": 0.0}
-    rows = load(form)
-    todo = [c for c in cs.combos() if B.ckey(c) not in rows and state["failed"].get(B.ckey(c), 0) < 3]
-    if limit:
-        todo = todo[:limit]
-    per = B.AVG["base"][0] * B.PRICE_IN + B.AVG["base"][1] * B.PRICE_OUT
-    if len(todo) * per > budget:
-        todo = todo[: int(budget / per)]
-    if not todo:
-        B.log("보낼 것이 없습니다")
-        return
-    B.log(f"{form}: {len(todo)}편 보냄 (예상 ${len(todo) * per:.2f}, 지금까지 ${state['spent']:.2f})")
-    client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
-    batch = client.messages.batches.create(
-        requests=[{"custom_id": B.ckey(c), "params": request(c, hero)} for c in todo])
-    state.setdefault("batches", []).append(batch.id)
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-    results = B.wait(client, batch.id)
-    writer = get_story_writer()
-    ok = bad = 0
-    spent = 0.0
-    for res in results:
-        k = res.custom_id
-        c = B.COMBO_BY_KEY[k]
+    wp = work_path(form)
+    work = json.loads(wp.read_text(encoding="utf-8")) if wp.exists() else {}
+
+    def save() -> None:
+        wp.write_text(json.dumps(work, ensure_ascii=False), encoding="utf-8")
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def fail(k: str, why: str) -> None:
+        state["failed"][k] = state["failed"].get(k, 0) + 1
+        work["items"].pop(k, None)
+        B.log(f"  버림 {k}: {why}")
+
+    def spend(msg, price: tuple[float, float]) -> float:
+        cost = (msg.usage.input_tokens * price[0] + msg.usage.output_tokens * price[1]) / 1e6
+        work["spent"] = work.get("spent", 0.0) + cost
+        return cost
+
+    def text_of(res) -> str | None:
         if res.result.type != "succeeded":
-            state["failed"][k] = state["failed"].get(k, 0) + 1
-            bad += 1
-            continue
-        msg = res.result.message
-        u = {"input": msg.usage.input_tokens, "output": msg.usage.output_tokens}
-        spent += u["input"] * B.PRICE_IN + u["output"] * B.PRICE_OUT
-        text = "".join(b.text for b in msg.content if b.type == "text")
-        try:
-            payload, problems = B.read_base(c, text, writer)
-            problems += body_problems(cs.book_from_payload(payload, None), hero)   # 걷기 · 발 · 손 (11/10)
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
-            state["failed"][k] = state["failed"].get(k, 0) + 1
-            bad += 1
-            B.log(f"  형식 오류 {k}: {e}")
-            continue
-        if problems:
-            state["failed"][k] = state["failed"].get(k, 0) + 1
-            bad += 1
-            B.log(f"  검사 걸림 {k}: {'; '.join(problems)}")
-            continue
-        r = B.row(c, "long", "narration", payload, problems, u,
-                  opening=OPENINGS[cs.combos().index(c) % len(OPENINGS)], spot=cs.spot_for(c))
-        r["form"] = form
-        with rows_path.open("a", encoding="utf-8") as f:
+            return None
+        return json_part("".join(b.text for b in res.result.message.content if b.type == "text"))
+
+    client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
+    writer = get_story_writer()
+    mname, mprice = MODELS[(work.get("model") or model)]
+
+    # 1. 쓰기
+    if "gen" not in work:
+        rows = load(form)
+        todo = [c for c in cs.combos() if B.ckey(c) not in rows and state["failed"].get(B.ckey(c), 0) < 3]
+        if limit:
+            todo = todo[:limit]
+        per = PER_STORY[model] if review else PER_STORY[model] * 0.7
+        if budget and len(todo) * per > budget:
+            todo = todo[: int(budget / per)]
+        if not todo:
+            B.log("보낼 것이 없습니다")
+            return
+        B.log(f"{form}: {len(todo)}편 보냄 · {model} (예상 ${len(todo) * per:.2f}, 지금까지 ${state['spent']:.2f})")
+        reqs = []
+        for c in todo:
+            params = request(c, hero)
+            params["model"] = mname
+            reqs.append({"custom_id": B.ckey(c), "params": params})
+        work = {"gen": client.messages.batches.create(requests=reqs).id, "model": model, "review": review, "items": {}, "spent": 0.0}
+        state.setdefault("batches", []).append(work["gen"])
+        save()
+    if not work.get("gen_done"):
+        for res in B.wait(client, work["gen"]):
+            k, c = res.custom_id, B.COMBO_BY_KEY[res.custom_id]
+            raw = text_of(res)
+            if raw is None:
+                state["failed"][k] = state["failed"].get(k, 0) + 1
+                continue
+            spend(res.result.message, mprice)
+            try:
+                payload, problems = check(c, raw, hero, writer)
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
+                state["failed"][k] = state["failed"].get(k, 0) + 1
+                B.log(f"  형식 오류 {k}: {e}")
+                continue
+            u = res.result.message.usage
+            work["items"][k] = {"raw": raw, "payload": payload, "problems": problems, "first": problems,
+                                "usage": {"input": u.input_tokens, "output": u.output_tokens}}
+        work["gen_done"] = True
+        save()
+
+    # 2. 틀린 쪽만 고치기 (쪽 배치가 틀린 것은 고치기로 안 된다, 버리고 다음에 다시 쓴다)
+    for k in [k for k, it in work["items"].items() if any(x.startswith("쪽 배치") for x in it["problems"])]:
+        fail(k, "쪽 배치")
+    need = {k: it for k, it in work["items"].items() if it["problems"]}
+    if need and "fix" not in work:
+        work["fix"] = client.messages.batches.create(requests=[
+            {"custom_id": k, "params": fix_params(mname, B.COMBO_BY_KEY[k], hero, it["raw"], it["problems"])}
+            for k, it in need.items()]).id
+        save()
+    if need and not work.get("fix_done"):
+        got = {r.custom_id: r for r in B.wait(client, work["fix"])}
+        for k, it in need.items():
+            res = got.get(k)
+            fix = text_of(res) if res else None
+            if fix is None:
+                continue
+            spend(res.result.message, mprice)
+            try:
+                raw = merge_repair(it["raw"], fix)
+                it["payload"], it["problems"] = check(B.COMBO_BY_KEY[k], raw, hero, writer)
+                it["raw"], it["fixed"] = raw, True
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
+                B.log(f"  고치기 형식 오류 {k}: {e}")
+        work["fix_done"] = True
+        save()
+    for k in [k for k, it in work["items"].items() if it["problems"]]:
+        fail(k, "; ".join(work["items"][k]["problems"]))
+
+    # 3. Opus 검수 → 4. 지적한 쪽 고치기
+    if work.get("review") and work["items"]:
+        if "review_batch" not in work:
+            work["review_batch"] = client.messages.batches.create(requests=[
+                {"custom_id": k, "params": review_params(B.COMBO_BY_KEY[k], hero, it["payload"])}
+                for k, it in work["items"].items()]).id
+            save()
+        if not work.get("review_done"):
+            for res in B.wait(client, work["review_batch"]):
+                it = work["items"].get(res.custom_id)
+                txt = text_of(res)
+                if it is None or txt is None:
+                    continue
+                spend(res.result.message, REVIEW_PRICE)
+                try:
+                    it["review"] = json.loads(txt)
+                except json.JSONDecodeError:
+                    it["review"] = {"verdict": "error", "issues": []}
+            work["review_done"] = True
+            save()
+        flagged = {k: it for k, it in work["items"].items()
+                   if (it.get("review") or {}).get("verdict") == "fix" and (it["review"].get("issues") or [])}
+        if flagged and "rfix" not in work:
+            work["rfix"] = client.messages.batches.create(requests=[
+                {"custom_id": k, "params": fix_params(mname, B.COMBO_BY_KEY[k], hero, it["raw"],
+                                                      [f"{i.get('page')}쪽 [{i.get('kind')}] {i.get('note')}" for i in it["review"]["issues"]])}
+                for k, it in flagged.items()]).id
+            save()
+        if flagged and not work.get("rfix_done"):
+            got = {r.custom_id: r for r in B.wait(client, work["rfix"])}
+            for k, it in flagged.items():
+                res = got.get(k)
+                fix = text_of(res) if res else None
+                if fix is None:
+                    continue
+                spend(res.result.message, mprice)
+                try:
+                    raw = merge_repair(it["raw"], fix)
+                    payload, problems = check(B.COMBO_BY_KEY[k], raw, hero, writer)
+                except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                if not problems:          # 고친 것이 자동 검사를 지나야 바꾼다 (아니면 고치기 전 것 + 검수 지적 그대로 → draft)
+                    it["raw"], it["payload"], it["review_fixed"] = raw, payload, True
+            work["rfix_done"] = True
+            save()
+
+    # 5. 저장
+    ok = 0
+    with rows_path.open("a", encoding="utf-8") as f:
+        for k, it in work["items"].items():
+            c = B.COMBO_BY_KEY[k]
+            r = B.row(c, "long", "narration", it["payload"], [], it["usage"], model=mname,
+                      opening=OPENINGS[cs.combos().index(c) % len(OPENINGS)], spot=cs.spot_for(c))
+            r.update(form=form, first_problems=it["first"], fixed=bool(it.get("fixed")),
+                     review=it.get("review"), review_fixed=bool(it.get("review_fixed")))
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        ok += 1
-    state["spent"] = state.get("spent", 0) + spent
+            ok += 1
+    state["spent"] = state.get("spent", 0) + work.get("spent", 0.0)
+    passed = sum((it.get("review") or {}).get("verdict") == "pass" or bool(it.get("review_fixed")) for it in work["items"].values())
+    B.log(f"끝 · 저장 {ok} (검수 통과 · 고침 {passed}) · 이번 ${work.get('spent', 0):.2f} (한 편 ${work.get('spent', 0) / max(1, ok):.3f}) · 누적 ${state['spent']:.2f}")
     state_path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-    n = max(1, ok + bad)
-    B.log(f"끝 · 저장 {ok} · 다시/실패 {bad} · 이번 ${spent:.2f} (한 편 ${spent / n:.3f}) · 누적 ${state['spent']:.2f}")
+    wp.unlink(missing_ok=True)
 
 
 # 주인공(나)이 손 · 팔을 쓰는 글 — 사람 몸짓이라 4족형 · 사슬형에 맞지 않는다. 「손을 흔들어 웃게 했어요」 카드를 그대로
@@ -140,10 +310,13 @@ def load_db(form: str, approve_clean: bool) -> None:
             row.payload, row.model, row.prompt_version = r["payload"], r["model"], r["prompt_version"]
             hand = form != "biped" and (HERO_HAND.search(" ".join(page_text(p) for p in r["payload"]["book"]["pages"]))
                                         or body_problems(cs.book_from_payload(r["payload"], None), {"id": form}))
-            ok = approve_clean and not hand
+            rv = r.get("review") or {}
+            flagged = rv.get("verdict") not in (None, "pass") and not r.get("review_fixed")   # 검수 지적이 남음
+            ok = approve_clean and not hand and not flagged
             row.status = "approved" if ok else "draft"
             row.reviewed_by = "auto-check" if ok else None
-            row.note = "주인공이 손 · 팔을 쓰거나 걸음, 이 형태에 맞지 않음" if hand else None
+            row.note = ("주인공이 손 · 팔을 쓰거나 걸음, 이 형태에 맞지 않음" if hand
+                        else "검수 지적: " + "; ".join(f"{i.get('page')}쪽 {i.get('note')}" for i in rv.get("issues") or []) if flagged else None)
             counts[row.status] = counts.get(row.status, 0) + 1
             db.add(row)
         db.commit()
@@ -157,9 +330,11 @@ if __name__ == "__main__":
     ap.add_argument("--budget", type=float, default=0)
     ap.add_argument("--load", action="store_true")
     ap.add_argument("--approve-clean", action="store_true")
+    ap.add_argument("--model", choices=sorted(MODELS), default="opus")
+    ap.add_argument("--no-review", action="store_true")
     a = ap.parse_args()
     start = time.time()
     if a.load:
         load_db(a.form, a.approve_clean)
     else:
-        run(a.form, a.limit, a.budget)
+        run(a.form, a.limit, a.budget, a.model, not a.no_review)
