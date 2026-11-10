@@ -18,7 +18,34 @@ from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFil
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core import rate_limit
+from app.core import rate_limit👋 Welcome to Codespaces! You are on our default image. 
+   - It includes runtimes and tools for Python, Node.js, Docker, and more. See the full list here: https://aka.ms/ghcs-default-image
+   - Want to use a custom image instead? Learn more here: https://aka.ms/configure-codespace
+
+🔍 To explore VS Code to its fullest, search using the Command Palette (Cmd/Ctrl + Shift + P or F1).
+
+📝 Edit away, run your app as usual, and we'll automatically make it available for you to access.
+
+@minjune121 ➜ /workspaces/drawtale-backend (feat/qwen-narration) $ grep -rn "consent_version" app/
+app/models/guardian_voice.py:30:    consent_version: Mapped[str] = mapped_column(String(20))
+app/models/user.py:25:    consent_version: Mapped[str | None] = mapped_column(String(40), default=None)
+app/schemas/auth.py:31:    consent_version: str | None = _CONSENT_VERSION
+app/schemas/auth.py:42:    consent_version: str | None = _CONSENT_VERSION
+app/schemas/voice.py:9:    consent_version: str | None = None
+app/api/v1/auth.py:70:    db: Session, provider: str, member_id: str, consent_version: str | None, age_ticket: str | None
+app/api/v1/auth.py:72:    user = User(terms_agreed_at=utcnow(), consent_version=consent_version)
+app/api/v1/auth.py:106:        db, p.name, member_id, body.consent_version, body.age_ticket
+app/api/v1/auth.py:172:        account = _create_account(db, p.name, member_id, body.consent_version, body.age_ticket)
+app/api/v1/voice.py:6:  안내문은 프론트 동의 화면(`consent_version` 판)에 있다.
+app/api/v1/voice.py:60:        consent_version=row.consent_version if active else None,
+app/api/v1/voice.py:111:    consent_version: str = Form(max_length=20, description="동의한 안내문 판"),
+app/api/v1/voice.py:122:    return _register(request, audio, consent_version, db, user, GUARDIAN, ref_text)
+app/api/v1/voice.py:128:    consent_version: str,
+app/api/v1/voice.py:170:            user_id=user.id, kind=kind, consent_version=consent_version, consented_at=utcnow()
+app/api/v1/voice.py:174:    row.consent_version = consent_version
+app/api/v1/voice.py:226:    consent_version: str = Form(max_length=20, description="동의한 안내문 판"),
+app/api/v1/voice.py:237:    return _register(request, audio, consent_version, db, user, CHILD, ref_text)
+@minjune121 ➜ /workspaces/drawtale-backend (feat/qwen-narration) $ 
 from app.core.auth import current_user
 from app.core.errors import AppError
 from app.db.session import get_db
@@ -108,7 +135,7 @@ def register_voice(
     own_voice: bool = Form(
         description="[필수] 보호자 본인 목소리이며 아이 · 다른 사람 목소리가 아님"
     ),
-    consent_version: str = Form(max_length=20, description="동의한 안내문 판"),
+    consent_version: str = Form(max_length=40, description="동의한 안내문 판"),
     ref_text: str | None = Form(
         default=None,
         max_length=500,
