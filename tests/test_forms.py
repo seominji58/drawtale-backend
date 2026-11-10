@@ -216,6 +216,7 @@ def test_book_prompt_tells_the_hero_form():
     assert "walk, run, jump, breathe, shiver, search, idle" in prompt    # AI 동작 이름(jumping_gentle)이 아니라 쪽 동작 이름
     assert prompt.rstrip().endswith("}") or "JSON 으로만 답한다." in prompt
     assert "[주인공 모습]" not in book_prompt(8, False, None)
+    assert "카드 글자를 그대로 옮기지 않는다" in prompt                # 걷기 카드를 몸에 맞게 (11/10)
 
 
 @pytest.mark.parametrize(

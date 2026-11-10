@@ -206,6 +206,8 @@ def _book(*texts, protagonist="", cast=None, lines=None):
     "나는 천천히 다시 걸어도 괜찮았어요.",
     "선생님 곁에서 콩콩, 운동장으로 함께 갔어요.",
     "나는 의자에 앉아 쉬었어요.",
+    "엄마 곁에 앉으니 마음이 놓였어요.",
+    "나는 날개를 멈추고 귀를 쫑긋 세웠어요.",
 ])
 def test_body_problems_catches_winged_hero_walking_and_hands(text):
     got = body_problems(_book(text), WINGED)
@@ -221,6 +223,12 @@ def test_body_problems_catches_winged_hero_walking_and_hands(text):
     "어른은 손가락으로 길을 가리켰고, 나는 그 손끝을 따라 날아갔어요.",
     "멀리서 콩콩 소리가 들렸어요.",
     "나는 날개를 툭툭 털고 살금살금 날아갔어요.",
+    # 화면 몸짓 (빙글 · 꾸벅 · 끄덕 · 떨기 · 웅크리기, 11/10): 화면이 그림을 통째로 움직여 보여 준다
+    "나는 아주머니에게 꾸벅 인사했어요.",
+    "나는 고개를 끄덕끄덕하고 날아올랐어요.",
+    "나는 날개를 꼭 오므리고 숨을 죽였어요.",
+    "버섯 아래에서 날개를 접고 덜덜 떨었어요.",
+    "나는 기뻐서 빙글빙글 돌았어요.",
 ])
 def test_body_problems_skips_other_people_and_other_meanings(text):
     assert body_problems(_book(text), WINGED) == []
