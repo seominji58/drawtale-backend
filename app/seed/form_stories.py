@@ -11,6 +11,7 @@
 - 4족 · 사슬형 fixed-{형태}.jsonl (운영 대본 중 몸 규칙에 걸린 것을 틀린 쪽만 고친 것): 고친 것만 approved 로. 못 고친 것은 넣지 않는다
   (운영 대본 그대로)
 - draft 고치기 fixed-drafts5*.jsonl: 재검수를 지난 것만 approved 로 (날개형 · 4족 draft 를 고친 것)
+- 다시 쓴 것 regen-*.jsonl: 그 조합만 새로 쓴 것 (검수 통과 · 검수 고침만 approved)
 """
 
 from __future__ import annotations
@@ -93,8 +94,24 @@ def build(out: Path = SEED, storage: Path = Path("storage/card_stories")) -> dic
                          "form": form, "payload": r["payload"], "status": "approved", "model": "claude-opus-5-5",
                          "prompt_version": VERSION, "reviewed_by": "auto-check",
                          "note": "몸 규칙 고침 (11/10): " + "; ".join(r.get("problems_before") or [])})
-    # draft 고치기 (11/10 사용자 「draft 5편 고쳐」): fixed-drafts5*.jsonl 중 재검수를 지난 것은 approved 로 바꾼다 (나중 회차가 이긴다)
+    # draft 고치기 (11/10 사용자 「draft 5편 고쳐」): fixed-drafts5*.jsonl 중 재검수를 지난 것은 approved 로 바꾼다 (나중 회차가 이긴다).
+    # 처음부터 다시 쓴 것 (11/10 「2번 진행」): regen-*.jsonl (batch_form_stories 로 그 조합만 새로 쓴 것, 검수 통과 · 검수 고침)
     at = {tuple(d[k] for k in KEY): i for i, d in enumerate(rows)}
+    for path in sorted(storage.glob("regen-*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            r = json.loads(line) if line.strip() else None
+            rv = (r or {}).get("review") or {}
+            if not r or not (rv.get("verdict") == "pass" or r.get("review_fixed")):
+                continue
+            d = {**{k: r[k] for k in ("place", "problem", "action", "result", "length", "voice_mode", "form")}, "payload": r["payload"],
+                 "status": "approved", "model": r.get("model") or "claude-opus-5-5", "prompt_version": VERSION,
+                 "reviewed_by": "auto-check+opus-review", "note": "다시 씀 (11/10)"}
+            key = tuple(d[k] for k in KEY)
+            if key in at:
+                rows[at[key]] = d
+            else:
+                at[key] = len(rows)
+                rows.append(d)
     for path in sorted(storage.glob("fixed-drafts5*.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
             r = json.loads(line) if line.strip() else None
