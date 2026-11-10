@@ -250,6 +250,12 @@ def test_prompt_rules_from_review():
         assert words in prompt, words
     assert "발걸음은 콩콩" not in prompt and "한 걸음, 또 한 걸음" not in prompt    # 걷는 예시는 날개 · 지느러미형에 걷기를 부른다
     assert "잠수복" not in book_prompt(8, False, None, place="숲")
+    # 형태별 60편 검수 (11/10): 궁금해지는 말 뒤 빈 쪽 · 뜨거운 것 · 넘어짐을 재미로 · 장면 물건 · 살금살금 · 작은 몸짓 · 쉴 때
+    form = book_prompt(8, False, None, place="집", hero_form={"id": "radial", "kid_label": "흐느적흐느적 친구", "motions": {}})
+    for words in ("다음 쪽에 그 말에 맞는 일이", "끓는 주전자", "재미있는 일로 그리지 않는다", "물건의 자리 · 상태도",
+                  "살금살금 떠서", "사뿐사뿐", "둥실 내려앉아 쉰다"):
+        assert words in form, words
+    assert body_problems(_book("나는 사뿐사뿐 나아갔어요."), WINGED) and not body_problems(_book("나는 사뿐히 내려앉았어요."), WINGED)
 
 
 def test_body_problems_by_form_and_speaker():

@@ -7,6 +7,7 @@
     python -m scripts.batch_form_stories --form quadruped --limit 10 --budget 1     # 시험
     python -m scripts.batch_form_stories --form quadruped --budget 40               # 512편
     python -m scripts.batch_form_stories --form quadruped --load [--approve-clean]  # 표에 넣기
+    python -m scripts.batch_form_stories --form quadruped --check [--from-db]        # 만든 대본을 지금 검사로 다시 (무료)
 
 형태 규칙(forms)은 AI 서버(AI_SERVICE_URL)에서 받는다. 대본은 Claude(ANTHROPIC_API_KEY), 내용 검사는 OpenAI moderation.
 """
@@ -28,6 +29,7 @@ from app.services.book import (
     OPENINGS,
     body_problems,
     body_rules,
+    book_problems,
     book_prompt,
     book_user_message,
     form_words,
@@ -295,6 +297,46 @@ def page_text(p: dict) -> str:
     return p["text"] if "text" in p else " ".join(line["text"] for line in p["lines"])
 
 
+def check_saved(form: str, from_db: bool) -> None:
+    """이미 만든 대본을 지금 검사로 다시 본다 (11/10 사용자 「기존 만들어 둔 비휴머노이드 대본들 검사해 봐」).
+    jsonl(storage/card_stories/form-{형태}.jsonl) 또는 --from-db 면 card_stories 표. 검사는 쓰기와 같다(쪽 배치 · 카드 · 첫 쪽 자리 ·
+    모를 어른 · 내용 · 몸 규칙). 무료 (내용 검사는 OpenAI moderation). 결과는 storage/card_stories/check-{형태}.json"""
+    hero = forms.get(form)
+    if from_db:
+        from app.db.session import SessionLocal
+        from app.models.card_story import CardStory
+
+        with SessionLocal() as db:
+            rows = [{"place": r.place, "problem": r.problem, "action": r.action, "result": r.result, "payload": r.payload,
+                     "status": r.status} for r in db.query(CardStory).filter_by(form=form, length="long", voice_mode="narration")]
+    else:
+        rows = list(load(form).values())
+    writer = get_story_writer()
+    out, kinds = [], {}
+    for r in rows:
+        c = cs.Combo(r["place"], r["problem"], r["action"], r["result"])
+        try:
+            # 저장본(payload)에서 Book 을 다시 만들어 read_base 와 같은 검사 + 몸 규칙
+            book = cs.book_from_payload(r["payload"], None)
+            choices = {"place": c.place, "problem": c.problem, "action": c.action, "result": c.result}
+            problems = book_problems(book, choices, get_settings().story_pages, False, hero)
+            if B.spot_missing(c, book.pages[0].text()):
+                problems.append(f"첫 쪽에 자리 「{cs.spot_for(c)}」가 없다")
+            if B.UNKNOWN_ADULT.search(book.text()) and not B.KNOWN_ROLE.search(book.text()):
+                problems.append("누구인지 모를 어른")
+            problems += B.moderate(writer, book.text())
+        except (ValueError, KeyError, TypeError) as e:
+            problems = [f"형식 오류 {e}"]
+        for x in problems:
+            k = x.split(":")[0].split("쪽 ", 1)[-1] if "몸 규칙" in x else x.split(" ")[0]
+            kinds[k] = kinds.get(k, 0) + 1
+        if problems:
+            out.append({"key": B.ckey(c), "status": r.get("status"), "problems": problems})
+    path = OUT / f"check-{form}.json"
+    path.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    B.log(f"{form}: {len(rows)}편 중 걸림 {len(out)} · 종류 {kinds} → {path}")
+
+
 def load_db(form: str, approve_clean: bool) -> None:
     """jsonl → card_stories 표. 검사(형식 · 카드 · 내용)를 통과한 것만 jsonl 에 있으니 approve_clean 이면 바로 approved.
     단 주인공이 손 · 팔을 쓰는 글(HERO_HAND)과 몸 규칙에 걸리는 글(book.body_problems, 11/10)은 draft"""
@@ -332,9 +374,13 @@ if __name__ == "__main__":
     ap.add_argument("--approve-clean", action="store_true")
     ap.add_argument("--model", choices=sorted(MODELS), default="opus")
     ap.add_argument("--no-review", action="store_true")
+    ap.add_argument("--check", action="store_true", help="이미 만든 대본을 지금 검사로 다시 보기 (무료)")
+    ap.add_argument("--from-db", action="store_true", help="--check 를 card_stories 표에서")
     a = ap.parse_args()
     start = time.time()
-    if a.load:
+    if a.check:
+        check_saved(a.form, a.from_db)
+    elif a.load:
         load_db(a.form, a.approve_clean)
     else:
         run(a.form, a.limit, a.budget, a.model, not a.no_review)
