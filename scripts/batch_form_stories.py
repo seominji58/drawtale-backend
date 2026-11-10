@@ -8,6 +8,7 @@
     python -m scripts.batch_form_stories --form quadruped --budget 40               # 512편
     python -m scripts.batch_form_stories --form quadruped --load [--approve-clean]  # 표에 넣기
     python -m scripts.batch_form_stories --form quadruped --check [--from-db]        # 만든 대본을 지금 검사로 다시 (무료)
+    python -m scripts.batch_form_stories --form chain --check --file X.jsonl; ... --fix-saved --file X.jsonl  # 걸린 것만 고치기
 
 형태 규칙(forms)은 AI 서버(AI_SERVICE_URL)에서 받는다. 대본은 Claude(ANTHROPIC_API_KEY), 내용 검사는 OpenAI moderation.
 """
@@ -91,7 +92,16 @@ def work_path(form: str) -> Path:
 
 def check(c: cs.Combo, raw: str, hero: dict, writer) -> tuple[dict, list[str]]:
     """사람형 카드 이야기와 같은 검사(쪽 배치 · 카드 · 첫 쪽 자리 · 모를 어른 · 내용) + 형태 몸 규칙"""
-    payload, problems = B.read_base(c, raw, writer)
+    import openai
+
+    for k in range(6):
+        try:
+            payload, problems = B.read_base(c, raw, writer)
+            break
+        except openai.RateLimitError:
+            if k == 5:
+                raise
+            time.sleep(2 ** k * 2)
     return payload, problems + body_problems(cs.book_from_payload(payload, None), hero)
 
 
@@ -309,6 +319,70 @@ def moderate_slow(writer, text: str) -> list[str]:
     return ["내용 검사를 못 함 (429)"]
 
 
+def raw_from_payload(payload: dict) -> str:
+    """저장본(payload) → 대본 JSON (쓰기 응답과 같은 모양). 저장한 대본을 틀린 쪽만 고치기로 보낼 때"""
+    book = payload["book"]
+    pages, scene = [], []
+    for p in book["pages"]:
+        pages.append({"page": p["page"], "stage": p["stage"], "action": p["action"], "child_words": p.get("child_words") or "",
+                      "lines": [{"speaker": ln["speaker"], "text": ln["text"]} for ln in p["lines"]]})
+        sc = p.get("scene")
+        if sc:
+            scene.append({"page": p["page"], "hero_on_page": sc.get("hero_on_page", True), "characters": sc.get("characters") or [],
+                          "location": sc.get("location") or "", "background": sc.get("background") or ""})
+    cast = [{"name": n, "type": t} for n, t in (payload.get("cast") or {}).items()]   # 인물 이름 · 종류 (배경 지시문의 이름은 글자가 아니다)
+    return json.dumps({"title": book.get("title", ""), "protagonist": "나", "characters": cast, "pages": pages,
+                       "order_pages": book.get("order_pages") or [], "scene": {"character_sheet": book.get("character_sheet") or {}, "pages": scene}},
+                      ensure_ascii=False)
+
+
+def fix_saved(form: str, file: str, model: str = "opus") -> None:
+    """이미 만든 대본 중 --check 에 걸린 것을 틀린 쪽만 고친다 (11/10 사용자 「316편 고치기 진행해」, 운영 DB 4족 · 사슬형).
+    --check --file 이 남긴 check-{형태}.json 의 걸림을 고칠 것으로 보낸다(배치, effort low). 고친 뒤 자동 검사를 다시 하고,
+    결과는 storage/card_stories/fixed-{형태}.jsonl (원래 상태 · 고치기 전후 걸림). DB 에는 쓰지 않는다"""
+    hero = forms.get(form)
+    rows = {B.ckey(cs.Combo(r["place"], r["problem"], r["action"], r["result"])): r
+            for r in (json.loads(line) for line in Path(file).read_text(encoding="utf-8").splitlines() if line.strip())}
+    # 내용 검사 · 형식 오류는 고치기로 보낼 일이 아니다 (나머지 걸림만)
+    flagged = {f["key"]: probs for f in json.loads((OUT / f"check-{form}.json").read_text(encoding="utf-8"))
+               if (probs := [x for x in f["problems"] if "내용 검사" not in x and "형식 오류" not in x])}
+    mname, mprice = MODELS[model]
+    client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
+    writer = get_story_writer()
+    wp = OUT / f"fix-{form}-work.json"
+    work = json.loads(wp.read_text(encoding="utf-8")) if wp.exists() else {}
+    if "batch" not in work:
+        reqs = [{"custom_id": k, "params": fix_params(mname, B.COMBO_BY_KEY[k], hero, raw_from_payload(rows[k]["payload"]), probs)}
+                for k, probs in flagged.items()]
+        B.log(f"{form}: {len(reqs)}편 고치기 보냄 · {model}")
+        work = {"batch": client.messages.batches.create(requests=reqs).id}
+        wp.write_text(json.dumps(work), encoding="utf-8")
+    spent, ok = 0.0, 0
+    out = []
+    for res in B.wait(client, work["batch"]):
+        k = res.custom_id
+        r, before = rows[k], flagged.get(k, [])
+        rec = {**{f: r[f] for f in ("place", "problem", "action", "result", "status")}, "form": form,
+               "problems_before": before, "fixed": False, "payload": r["payload"]}
+        if res.result.type == "succeeded":
+            msg = res.result.message
+            spent += (msg.usage.input_tokens * mprice[0] + msg.usage.output_tokens * mprice[1]) / 1e6
+            try:
+                raw = merge_repair(raw_from_payload(r["payload"]), json_part("".join(b.text for b in msg.content if b.type == "text")))
+                payload, after = check(B.COMBO_BY_KEY[k], raw, hero, writer)
+                rec["problems_after"] = after
+                if not after:
+                    rec["payload"], rec["fixed"] = payload, True
+                    ok += 1
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
+                rec["problems_after"] = [f"고치기 형식 오류 {e}"]
+        out.append(rec)
+    path = OUT / f"fixed-{form}.jsonl"
+    path.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in out), encoding="utf-8")
+    wp.unlink(missing_ok=True)
+    B.log(f"{form}: 고침 {ok}/{len(out)} · ${spent:.2f} → {path}")
+
+
 def check_saved(form: str, from_db: bool, file: str | None = None, moderation: bool = True) -> None:
     """이미 만든 대본을 지금 검사로 다시 본다 (11/10 사용자 「기존 만들어 둔 비휴머노이드 대본들 검사해 봐」).
     jsonl(storage/card_stories/form-{형태}.jsonl) 또는 --from-db 면 card_stories 표. 검사는 쓰기와 같다(쪽 배치 · 카드 · 첫 쪽 자리 ·
@@ -393,9 +467,12 @@ if __name__ == "__main__":
     ap.add_argument("--from-db", action="store_true", help="--check 를 card_stories 표에서")
     ap.add_argument("--file", help="--check 를 이 jsonl 에서")
     ap.add_argument("--no-moderate", action="store_true", help="--check 에서 내용 검사(OpenAI) 빼기")
+    ap.add_argument("--fix-saved", action="store_true", help="--file 의 대본 중 --check 에 걸린 것을 틀린 쪽만 고치기 (배치)")
     a = ap.parse_args()
     start = time.time()
-    if a.check:
+    if a.fix_saved:
+        fix_saved(a.form, a.file, a.model)
+    elif a.check:
         check_saved(a.form, a.from_db, a.file, not a.no_moderate)
     elif a.load:
         load_db(a.form, a.approve_clean)
