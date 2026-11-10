@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     # 긴 이야기 쪽 음성을 동시에 몇 개까지 만들지 (2026-11-09). ElevenLabs 동시 호출 한도는 계정 전체에 걸리고 Turbo · Flash 모델은
     # Starter 6 · Creator 10 · Pro 20 (그 밖의 모델은 절반). 다른 이야기 · 안내 음성과 겹칠 수 있어 하나를 남긴다. 넘으면 다시 시도한다
     page_audio_workers: int = 5
+    # 녹음 목소리(보호자 · 아이) 업체 (2026-11-09): "elevenlabs" (기본, 지금과 같다)
+    #   | "qwen" (자체 서버 drawtale-tts). qwen 이면 녹음 목소리는 나레이션만 읽고,
+    #   기본 나레이터와 캐릭터 대사는 그대로 TTS_PROVIDER(ElevenLabs)가 읽는다
+    guardian_voice_provider: str = "elevenlabs"
+    # drawtale-tts 주소 (modal deploy 가 알려 준 주소) 와 Bearer 토큰. 토큰은 여기에만 둔다
+    qwen_tts_url: str = ""
+    qwen_tts_token: str = ""
+    # Modal 은 쉬던 GPU 를 켜는 데(콜드 스타트) 1~2분 걸릴 수 있다
+    qwen_tts_timeout_seconds: float = 180
     # 캐릭터 목소리 판의 인물 목소리는 app/services/voices.py 목록에 있다
 
     # Social login (authorization code flow). Secrets live only here, never in the frontend.

@@ -19,6 +19,10 @@ os.environ["ELEVENLABS_API_KEY"] = ""
 # 본인인증(포트원)도 키를 비워 가입에 요구하지 않는다. 시험은 tests/test_age_check.py 가 직접 켠다
 os.environ["PORTONE_API_SECRET"] = ""
 os.environ.pop("AGE_VERIFICATION_REQUIRED", None)
+# 녹음 목소리 서버(drawtale-tts)도 실제 GPU 를 부르지 않는다
+os.environ["GUARDIAN_VOICE_PROVIDER"] = "elevenlabs"
+os.environ["QWEN_TTS_URL"] = ""
+os.environ["QWEN_TTS_TOKEN"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
