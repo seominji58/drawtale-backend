@@ -151,6 +151,12 @@ class BookPage(BaseModel):
     audio_url: str | None = Field(
         default=None, description="이 쪽 MP3. 없으면 프론트가 브라우저 TTS 로 읽는다"
     )
+    audio_pending: bool = Field(
+        default=False,
+        description=(
+            "이 쪽 음성을 아직 만드는 중 (첫 쪽만으로 책을 먼저 연다, 2026-11-10). 프론트는 이야기를 다시 불러 audio_url 을 기다린다"
+        ),
+    )
     animation_url: str | None = Field(
         default=None,
         description=(

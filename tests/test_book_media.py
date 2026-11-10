@@ -1,5 +1,6 @@
 """긴 이야기의 쪽마다 음성 · 쪽마다 동작 영상 (가짜 TTS · 가짜 AI — 외부 API 를 부르지 않는다)."""
 
+import threading
 import uuid
 from types import SimpleNamespace
 
@@ -551,3 +552,98 @@ def test_page_audio_uses_prefetched_narration(monkeypatch):
     paths = jobs.make_page_audio(_story(), get_storage(), Book("숲", pages, [1, 2]), None, pre)
     pre.close()
     assert all(paths) and tts.spoken[before:] == ["길을 잃었어요."]
+
+
+class SlowAfterFirstTTS(FakeTTS):
+    """첫 쪽은 바로, 나머지 쪽은 gate 가 열릴 때까지 (녹음 목소리처럼 느린 TTS)"""
+
+    def __init__(self, first_text):
+        super().__init__()
+        self.first_text = first_text
+        self.gate = threading.Event()
+
+    def speak(self, text):
+        if text != self.first_text:
+            assert self.gate.wait(10)
+        return super().speak(text)
+
+
+def test_book_opens_with_first_page_audio(client, png_bytes, monkeypatch):
+    """첫 쪽 음성이 나오면 이야기를 성공으로 내고, 나머지 쪽은 「만드는 중」으로 두었다가 채운다 (2026-11-10)"""
+    first = fallback_book(CHOICES, 8).pages[0].text()
+    tts = SlowAfterFirstTTS(first)
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: tts)
+    monkeypatch.setattr(jobs, "PAGE_AUDIO_WORKERS", 1)
+    monkeypatch.setattr(jobs, "_tts_slots", None)
+    monkeypatch.setattr(jobs, "write_story_book", lambda story, form, on_page=None: fallback_book(CHOICES, 8))
+    rest = []
+    monkeypatch.setattr(jobs, "finish_page_audio", lambda *a: rest.append(a))   # 성공을 알린 뒤 할 일을 여기서 멈춘다
+    res = client.post("/api/v1/characters", files={"image": ("d.png", png_bytes, "image/png")})
+    res = client.post("/api/v1/stories", json={"character_id": res.json()["character_id"], **CHOICES, "length": "long"})
+    story_id = res.json()["story_id"]
+
+    story = client.get(f"/api/v1/stories/{story_id}").json()
+    assert story["status"] == "succeeded"
+    pages = story["book"]["pages"]
+    assert pages[0]["audio_url"] and not pages[0]["audio_pending"]
+    assert all(p["audio_url"] is None and p["audio_pending"] for p in pages[1:])
+    assert "audio_pending_since" not in story["book"]
+
+    for _ in range(100):   # 나머지 쪽 채우기는 따로 스레드에서 불린다
+        if rest:
+            break
+        jobs.time.sleep(0.02)
+    tts.gate.set()
+    monkeypatch.undo()   # 진짜 finish_page_audio 로 채운다
+    jobs.finish_page_audio(*rest[0])
+    pages = client.get(f"/api/v1/stories/{story_id}").json()["book"]["pages"]
+    assert all(p["audio_url"].split("?")[0].endswith(f"page{p['page']:02d}.mp3") for p in pages)
+    assert not any(p["audio_pending"] for p in pages)
+
+
+def test_audio_pending_expires(monkeypatch):
+    """나머지 쪽을 채우던 스레드가 사라졌으면(서버 재시작) 오래 지나 「만드는 중」을 떼고 내려 준다"""
+    from app.api.v1.stories import book_response
+
+    book = {"title": "t", "order_pages": [], "pages": [{"page": 1, "audio_pending": True}]}
+    assert book_response({**book, "audio_pending_since": jobs.time.time()}, get_storage())["pages"][0]["audio_pending"]
+    old = jobs.time.time() - jobs.AUDIO_PENDING_MAX_SECONDS - 1
+    assert not book_response({**book, "audio_pending_since": old}, get_storage())["pages"][0]["audio_pending"]
+    assert not book_response(book, get_storage())["pages"][0]["audio_pending"]
+
+
+def test_finish_page_audio_drops_files_if_voice_forgotten(monkeypatch):
+    """나머지 쪽을 만드는 사이 녹음 목소리를 지웠으면 새 음성 파일도 지우고 넣지 않는다"""
+    from concurrent.futures import Future
+
+    from app.db.session import SessionLocal
+    from app.models import Character, Story
+
+    storage = get_storage()
+    with SessionLocal() as db:
+        ch = Character(upload_blob_path="u.png", image_width=10, image_height=10)
+        db.add(ch)
+        db.flush()
+        story = Story(character_id=ch.id, **CHOICES, length="long", narrator_voice_id=None,
+                      book={"pages": [{"page": 1, "audio_blob_path": "a"}, {"page": 2, "audio_pending": True}],
+                            "audio_pending_since": 1})
+        db.add(story)
+        db.commit()
+        sid = story.id
+    path = storage.save("results/x/page02.mp3", b"mp3")
+    job = Future()
+    job.set_result(["a", path])
+    done = []
+    jobs.finish_page_audio(sid, job, "voice-deleted", lambda: done.append(1))
+    with SessionLocal() as db:
+        book = db.get(Story, sid).book
+    assert done and "audio_pending_since" not in book
+    assert book["pages"][1] == {"page": 2}
+    assert _read_or_none(storage, path) is None
+
+
+def _read_or_none(storage, path):
+    try:
+        return storage.read(path)
+    except Exception:
+        return None

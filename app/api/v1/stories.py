@@ -25,7 +25,7 @@ from app.schemas.story import (
 )
 from app.services import forms
 from app.services.jobs import (
-    MOTION_ACTION, cancel_job, current_joints, facing_of, read_sprite_meta, read_still_body, read_still_hands, run_story_job, short_motion, sprite_path_for,
+    MOTION_ACTION, audio_pending, cancel_job, current_joints, facing_of, read_sprite_meta, read_still_body, read_still_hands, run_story_job, short_motion, sprite_path_for,
 )
 from app.services.storage import get_storage
 
@@ -39,9 +39,12 @@ def book_response(book: dict | None, storage) -> dict | None:
 
     if not book:
         return None
+    # 나머지 쪽 음성을 만드는 중이라 해 놓고 너무 오래 못 채웠으면(서버를 다시 켬 등) 화면이 더 기다리지 않게 뗀다
+    pending = audio_pending(book)
     pages = [
         {
-            **{k: v for k, v in p.items() if not k.endswith("_blob_path")},
+            **{k: v for k, v in p.items() if not k.endswith("_blob_path") and k != "audio_pending"},
+            "audio_pending": pending and bool(p.get("audio_pending")),
             "audio_url": storage.url(p.get("audio_blob_path")),
             "animation_url": storage.url(p.get("animation_blob_path")),
             # 바탕이 투명한 프레임 묶음 (S-09 장면 층, 2026-11-03).

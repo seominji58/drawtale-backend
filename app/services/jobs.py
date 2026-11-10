@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -552,7 +553,8 @@ def _read(storage, path: str) -> bytes | None:
         return None
 
 
-def cached_page_audio(story: Story, storage, book: Book, key: str, cast_out: dict | None = None) -> list[str | None]:
+def cached_page_audio(story: Story, storage, book: Book, key: str, cast_out: dict | None = None,
+                      progress: "PageAudioProgress | None" = None) -> list[str | None]:
     """긴 저장본 이야기의 쪽 음성. 만들어 둔 것이 있으면 이 이야기 폴더로 복사하고, 없으면 만들어서 둔다.
 
     cast_out 을 주면 목소리 배정을 story.voice_cast 대신 거기에 담는다 (쪽 동작 렌더와 동시에 다른 스레드에서 돌 때,
@@ -568,12 +570,11 @@ def cached_page_audio(story: Story, storage, book: Book, key: str, cast_out: dic
         else:
             story.voice_cast = voices
         return [storage.save(f"results/{story.id}/page{p.page:02d}.mp3", a) for p, a in zip(book.pages, pages, strict=True)]
-    out: dict = {}
-    paths = make_page_audio(story, storage, book, out)
+    # 목소리 배정은 쪽을 만들기 전에 정해진다. cast_out 에 바로 담아야 첫 쪽만으로 책을 열 때도 있다 (PageAudioProgress)
+    out: dict = cast_out if cast_out is not None else {}
+    paths = make_page_audio(story, storage, book, out, progress=progress)
     voices = out.get("voices")
-    if cast_out is not None:
-        cast_out["voices"] = voices
-    elif voices is not None:
+    if cast_out is None and voices is not None:
         story.voice_cast = voices
     if all(paths):  # 한 쪽이라도 실패했으면 두지 않는다, 다음에 다시 만든다
         for p, path in zip(book.pages, paths, strict=True):
@@ -819,7 +820,8 @@ class PageAudioPrefetch:
 
 
 def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = None,
-                    prefetch: PageAudioPrefetch | None = None) -> list[str | None]:
+                    prefetch: PageAudioPrefetch | None = None,
+                    progress: "PageAudioProgress | None" = None) -> list[str | None]:
     """쪽마다 MP3. 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다 (음성 비용이 늘지 않는다).
 
     캐릭터 목소리 판이고 인물 목소리를 쓸 수 있으면(make_audio 와 같다)
@@ -846,6 +848,7 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
         story.voice_cast = voices
 
     def one(page) -> str | None:
+        path = None
         try:
             audio = None
             if voices and any(s != NARRATOR for s, _, _ in page.lines):
@@ -857,13 +860,75 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
                 if audio is None:
                     with tts_slot():
                         audio = _tts_retry(lambda: tts.speak(page.text()))
-            return storage.save(f"results/{story.id}/page{page.page:02d}.mp3", audio)
+            path = storage.save(f"results/{story.id}/page{page.page:02d}.mp3", audio)
         except Exception:
             log.exception("%d쪽 음성 %d번 실패, 그 쪽은 음성 없이 (화면은 읽지 않는다)", page.page, TTS_TRIES)
-            return None
+        if progress is not None and page is book.pages[0]:
+            progress.first_done(path)
+        return path
 
     with ThreadPoolExecutor(max(1, PAGE_AUDIO_WORKERS or get_settings().page_audio_workers)) as ex:
         return list(ex.map(one, book.pages))
+
+
+class PageAudioProgress:
+    """쪽 음성을 다 기다리지 않고 첫 쪽이 되면 책을 연다 (2026-11-10 「첫 쪽만 만들고 책 열기」, 녹음 목소리(drawtale-tts)는
+    쪽 하나에 수십 초라 8쪽을 다 기다리면 분 단위였다). 음성을 만드는 스레드가 첫 쪽 결과를 넣고, 이야기 작업이 기다린다"""
+
+    def __init__(self) -> None:
+        self.first = threading.Event()
+        self.first_path: str | None = None
+
+    def first_done(self, path: str | None) -> None:
+        self.first_path = path
+        self.first.set()
+
+
+# 첫 쪽만으로 연 책에서 나머지 쪽 음성을 이만큼 지나도 못 채웠으면(서버를 다시 켜 채우던 스레드가 사라짐 등) 화면이 더
+# 기다리지 않게 「만드는 중」을 떼고 내려 준다 (stories.book_response). 녹음 목소리 8쪽을 하나씩 만들어도 넉넉한 값
+AUDIO_PENDING_MAX_SECONDS = 600
+# 첫 쪽이 나온 뒤 나머지 쪽을 이만큼은 더 기다려 본다. 그 안에 끝나면 「만드는 중」 없이 다 채워 낸다
+AUDIO_GRACE_SECONDS = 1.5
+
+
+def audio_pending(book: dict) -> bool:
+    """첫 쪽만으로 연 책의 나머지 쪽 음성을 아직 만드는 중인가 (너무 오래되면 아니라고 본다)"""
+
+    since = book.get("audio_pending_since")
+    return bool(since) and time.time() - float(since) < AUDIO_PENDING_MAX_SECONDS
+
+
+def finish_page_audio(story_id: uuid.UUID, audio_job, voice_id: str | None, after) -> None:  # noqa: ANN001
+    """첫 쪽만으로 연 책의 나머지 쪽 음성을 기다려 책에 채운다. 이야기 작업이 성공을 알린 뒤 따로 스레드에서 돈다.
+
+    음성 스레드는 DB 객체를 건드리지 않으므로 여기서 세션을 새로 열고 행을 잠근 뒤 쪽 음성 자리만 고친다.
+    그사이 녹음 목소리를 지웠으면(voice._forget) 새로 만든 음성 파일도 지우고 넣지 않는다"""
+
+    try:
+        audio = audio_job.result()
+    except Exception:
+        log.exception("story %s: 나머지 쪽 음성을 만들지 못했습니다", story_id)
+        audio = None
+    finally:
+        after()
+    storage = get_storage()
+    with db_session.SessionLocal() as db:
+        story = db.get(Story, story_id, with_for_update=True)
+        if story is None or not story.book:
+            return
+        forgotten = story.narrator_voice_id != voice_id
+        if forgotten and audio:
+            for path in audio[1:]:
+                storage.delete(path)
+        pages = []
+        for i, page in enumerate(story.book["pages"]):
+            page = {k: v for k, v in page.items() if k != "audio_pending"}
+            if audio and not forgotten and i > 0:
+                page["audio_blob_path"] = audio[i]
+            pages.append(page)
+        story.book = {**{k: v for k, v in story.book.items() if k != "audio_pending_since"}, "pages": pages}
+        db.commit()
+    log.info("story %s: 나머지 쪽 음성을 채웠습니다", story_id)
 
 
 # 이야기를 만들 때 새로 렌더할 동작(미리 렌더하지 않은 것 · 예전 걷기 다시 렌더)을 동시에 몇 개까지 (2026-11-09 실측: 셋을 차례로
@@ -1152,6 +1217,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
 
         storage = get_storage()
         stop = lambda: cancelled(job_id)  # noqa: E731
+        rest_audio = None   # 첫 쪽만으로 책을 열었으면 (나머지 쪽 음성 일, 녹음 목소리, 끝나면 할 일)
         try:
             # 카드로만 고른 이야기는 사람이 읽고 통과시킨 저장본을 꺼낸다 — 대본 0초 (pt_docs 13 1-1)
             # 미리 만든 카드 이야기는 형태별로 따로 썼다(사람형은 「손을 흔들었어요」) — 그 형태 것이 없으면 대본 AI 가 새로 (pt_docs 19,
@@ -1189,24 +1255,50 @@ def run_story_job(job_id: uuid.UUID) -> None:
                 cast: dict = {}
                 sprites: set[str] = set()   # 투명 프레임 묶음까지 있는 동작
                 audio_key = card_audio_key(stored, story) if shared_audio else None   # DB 객체는 여기(본 스레드)서 읽는다
-                with ThreadPoolExecutor(1) as bg:
-                    audio_job = bg.submit(
-                        (lambda: cached_page_audio(story, storage, book, audio_key, cast))
-                        if shared_audio
-                        else (lambda: make_page_audio(story, storage, book, cast, prefetch))
-                    )
+                # 동작이 다 되고 첫 쪽 음성이 나오면 책을 연다. 나머지 쪽 음성이 아직이면 「만드는 중」으로 두고, 성공을 알린 뒤
+                # 이 작업 끝에서 기다려 채운다 (finish_page_audio, 2026-11-10 「첫 쪽만 만들고 책 열기」)
+                progress = PageAudioProgress()
+
+                def page_audio() -> list[str | None]:
+                    try:
+                        if shared_audio:
+                            return cached_page_audio(story, storage, book, audio_key, cast, progress)
+                        return make_page_audio(story, storage, book, cast, prefetch, progress)
+                    finally:
+                        progress.first.set()   # 음성 키가 없거나 첫 쪽 전에 실패해도 기다림이 풀리게
+
+                bg = ThreadPoolExecutor(1)
+                audio_job = bg.submit(page_audio)
+
+                def audio_done() -> None:
+                    if prefetch is not None:
+                        prefetch.close()
+                    bg.shutdown(wait=False)
+
+                try:
                     wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}, stop)
                     _stop_if_cancelled(job_id)
                     clips = make_page_clips(story, character, storage, book, sprites)
-                    audio = audio_job.result()
+                    progress.first.wait()
+                except BaseException:
+                    audio_done()
+                    raise
+                try:   # 나머지도 곧 끝나면(ElevenLabs 는 쪽들이 거의 함께 끝난다) 기다렸다 한 번에
+                    audio = audio_job.result(timeout=AUDIO_GRACE_SECONDS)
+                    audio_done()
+                except FutureTimeout:
+                    audio = [progress.first_path] + [None] * (len(book.pages) - 1)
+                    rest_audio = (audio_job, story.narrator_voice_id, audio_done)
                 if cast.get("voices") is not None:
                     story.voice_cast = cast["voices"]
-                if prefetch is not None:
-                    prefetch.close()
                 _stop_if_cancelled(job_id)
                 data = book.to_json()
-                for page, path in zip(data["pages"], audio, strict=True):
+                if rest_audio is not None:
+                    data["audio_pending_since"] = time.time()
+                for i, (page, path) in enumerate(zip(data["pages"], audio, strict=True)):
                     page["audio_blob_path"] = path
+                    if rest_audio is not None and i > 0:
+                        page["audio_pending"] = True
                     page["animation_blob_path"] = clips.get(PAGE_MOTIONS.get(page["action"]) or "")
                     # 투명 프레임 묶음(영상 옆 같은 이름)이 있으면 화면이 장면 층으로 쌓는다.
                     # 없으면 영상
@@ -1271,3 +1363,13 @@ def run_story_job(job_id: uuid.UUID) -> None:
         db.commit()
         with _cancel_lock:
             _cancelled.discard(job_id)
+        succeeded = story.status == JobStatus.succeeded
+        story_id = story.id
+    if rest_audio is not None:
+        if succeeded:
+            # 따로 돌려 이 작업은 바로 끝낸다: 이야기 작업 자리(story:<회원>)가 풀려 책을 읽다 다음 이야기를 만들 수 있다.
+            # 동시 음성 수는 tts_slot 이 모든 이야기를 합쳐 막는다
+            threading.Thread(target=finish_page_audio, args=(story_id, *rest_audio), daemon=True,
+                             name=f"page-audio-{story_id}").start()
+        else:   # 첫 쪽 뒤에 그만두거나 실패했다. 음성 스레드는 끝나게 두고 기다리지 않는다
+            rest_audio[2]()
