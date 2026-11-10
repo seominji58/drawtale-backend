@@ -85,6 +85,14 @@ def cast_voices(
     for name, kind in (*cast.items(), *((s, "") for s in speakers)):
         if name not in voices:
             kind = next((k for word, k in KIND_BY_NAME if word in name), kind)
+            kind = _ALIAS.get(kind, kind)
+            look = looks.get(name.replace(" ", ""), "")
+            # 화면 그림은 생김새(character_sheet)로 고른다 — 대본 종류와 생김새의 성별 · 나이가 다르면 생김새를 따른다
+            # (그림은 여자아이인데 목소리는 남자였다, 11/10)
+            if look and kind in voice_types:
+                g = guess_kind(name, look)
+                if _clear(look) and g != kind and g in voice_types:
+                    kind = g
             if kind not in voice_types:
                 # 종류를 모르면(대본이 cast 에 빠뜨림 · 「친구 민지」처럼 이름이 다름) 이름 · 생김새(character_sheet)로 짐작한다.
                 # 전에는 아무 남은 목소리라 여자아이 등장인물이 어른 남자 목소리로 읽혔다 (11/10)
@@ -99,6 +107,18 @@ _ADULT = ("엄마", "아빠", "이모", "고모", "삼촌", "아주머니", "아
           "간호사", "안내원", "지킴이", "주인", "기사", "박사", "대장")
 _ANIMAL_SMALL = ("토끼", "다람쥐", "새", "참새", "병아리", "고양이", "강아지", "생쥐", "나비", "개구리", "물고기", "햄스터")
 _ANIMAL_BIG = ("곰", "사자", "코끼리", "호랑이", "공룡", "고래", "하마", "기린")
+
+
+# 대본이 가끔 적는 다른 이름 (저장 대본 1,024편 점검: 동물 7 · 아이-여럿 4 · 외계인 1)
+_ALIAS = {"동물": "작은 동물", "아이-여럿": "아이-여", "아이-여러 명": "아이-여", "외계인": "작은 동물", "아이": "아이-여"}
+
+
+def _clear(look: str) -> bool:
+    """생김새가 성별 · 나이를 분명히 말하나 (girl · boy · woman · man …)."""
+
+    lk = f" {look.lower()} "
+    return any(w in lk for w in (" girl", " boy", " woman", " man ", " man,", " mother", " father", " grandma", " grandpa", " lady",
+                                 " rabbit", " bear", " puppy", " cat ", " bird"))
 
 
 def guess_kind(name: str, look: str = "") -> str:
