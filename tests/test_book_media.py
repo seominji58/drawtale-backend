@@ -638,7 +638,7 @@ def test_finish_page_audio_drops_files_if_voice_forgotten(monkeypatch):
     with SessionLocal() as db:
         book = db.get(Story, sid).book
     assert done and "audio_pending_since" not in book
-    assert book["pages"][1] == {"page": 2}
+    assert book["pages"][1].get("audio_blob_path") is None and "audio_pending" not in book["pages"][1]
     assert _read_or_none(storage, path) is None
 
 
@@ -647,3 +647,56 @@ def _read_or_none(storage, path):
         return storage.read(path)
     except Exception:
         return None
+
+
+class GatedTTS(FakeTTS):
+    """쪽마다 따로 여는 TTS (첫 쪽만 바로): 쪽이 끝나는 대로 채우는지 본다"""
+
+    def __init__(self, texts):
+        super().__init__()
+        self.gates = {t: threading.Event() for t in texts[1:]}
+
+    def speak(self, text):
+        gate = self.gates.get(text)
+        if gate is not None:
+            assert gate.wait(10)
+        return super().speak(text)
+
+
+def test_page_audio_filled_page_by_page(client, png_bytes, monkeypatch):
+    """2쪽이 되면 2쪽부터 채운다, 남은 쪽이 다 끝날 때까지 기다리지 않는다 (11/10 사용자 「쪽마다 바로 채우게」)"""
+    book = fallback_book(CHOICES, 8)
+    texts = [p.text() for p in book.pages]
+    tts = GatedTTS(texts)
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: tts)
+    monkeypatch.setattr(jobs, "PAGE_AUDIO_WORKERS", 1)
+    monkeypatch.setattr(jobs, "_tts_slots", None)
+    monkeypatch.setattr(jobs, "AUDIO_GRACE_SECONDS", 0.1)
+    monkeypatch.setattr(jobs, "write_story_book", lambda story, form, on_page=None: fallback_book(CHOICES, 8))
+    rest = []
+    monkeypatch.setattr(jobs, "finish_page_audio", lambda *a: rest.append(a))
+    res = client.post("/api/v1/characters", files={"image": ("d.png", png_bytes, "image/png")})
+    res = client.post("/api/v1/stories", json={"character_id": res.json()["character_id"], **CHOICES, "length": "long"})
+    story_id = res.json()["story_id"]
+    for _ in range(100):
+        if rest:
+            break
+        jobs.time.sleep(0.02)
+    monkeypatch.undo()
+    monkeypatch.setattr(jobs, "TTS_RETRY_SECONDS", 0.0)
+    worker = threading.Thread(target=jobs.finish_page_audio, args=rest[0])
+    worker.start()
+    tts.gates[texts[1]].set()   # 2쪽만
+    pages = None
+    for _ in range(200):
+        pages = client.get(f"/api/v1/stories/{story_id}").json()["book"]["pages"]
+        if pages[1]["audio_url"]:
+            break
+        jobs.time.sleep(0.02)
+    assert pages[1]["audio_url"] and not pages[1]["audio_pending"]
+    assert all(p["audio_url"] is None and p["audio_pending"] for p in pages[2:])
+    for g in tts.gates.values():
+        g.set()
+    worker.join(10)
+    pages = client.get(f"/api/v1/stories/{story_id}").json()["book"]["pages"]
+    assert all(p["audio_url"] for p in pages) and not any(p["audio_pending"] for p in pages)

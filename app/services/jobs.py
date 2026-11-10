@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import queue
 import threading
 import time
 import uuid
@@ -863,8 +864,10 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
             path = storage.save(f"results/{story.id}/page{page.page:02d}.mp3", audio)
         except Exception:
             log.exception("%d쪽 음성 %d번 실패, 그 쪽은 음성 없이 (화면은 읽지 않는다)", page.page, TTS_TRIES)
-        if progress is not None and page is book.pages[0]:
-            progress.first_done(path)
+        if progress is not None:
+            if page is book.pages[0]:
+                progress.first_done(path)
+            progress.page_done(next(i for i, q in enumerate(book.pages) if q is page), path)
         return path
 
     with ThreadPoolExecutor(max(1, PAGE_AUDIO_WORKERS or get_settings().page_audio_workers)) as ex:
@@ -878,10 +881,16 @@ class PageAudioProgress:
     def __init__(self) -> None:
         self.first = threading.Event()
         self.first_path: str | None = None
+        # 끝난 쪽 (쪽 순번, 파일). 성공을 알린 뒤 finish_page_audio 가 받는 대로 그 쪽만 책에 채운다 (11/10 사용자 「쪽마다 바로 채우게」,
+        # 전에는 남은 쪽이 다 끝나야 한꺼번에 채워 2쪽이 먼저 돼도 8쪽까지 기다렸다)
+        self.done: queue.Queue[tuple[int, str | None]] = queue.Queue()
 
     def first_done(self, path: str | None) -> None:
         self.first_path = path
         self.first.set()
+
+    def page_done(self, index: int, path: str | None) -> None:
+        self.done.put((index, path))
 
 
 # 첫 쪽만으로 연 책에서 나머지 쪽 음성을 이만큼 지나도 못 채웠으면(서버를 다시 켜 채우던 스레드가 사라짐 등) 화면이 더
@@ -898,36 +907,70 @@ def audio_pending(book: dict) -> bool:
     return bool(since) and time.time() - float(since) < AUDIO_PENDING_MAX_SECONDS
 
 
-def finish_page_audio(story_id: uuid.UUID, audio_job, voice_id: str | None, after) -> None:  # noqa: ANN001
-    """첫 쪽만으로 연 책의 나머지 쪽 음성을 기다려 책에 채운다. 이야기 작업이 성공을 알린 뒤 따로 스레드에서 돈다.
+def _fill_page_audio(story_id: uuid.UUID, voice_id: str | None, paths: dict[int, str | None], final: bool) -> bool:
+    """책의 쪽 음성 자리를 채운다. paths 의 쪽만, final 이면 아직 「만드는 중」인 쪽을 모두 끝낸다(없는 쪽은 음성 없음).
+    그사이 녹음 목소리를 지웠으면(voice._forget) 받은 음성 파일을 지우고 「만드는 중」을 모두 떼고 False (더 채우지 않는다)"""
 
-    음성 스레드는 DB 객체를 건드리지 않으므로 여기서 세션을 새로 열고 행을 잠근 뒤 쪽 음성 자리만 고친다.
-    그사이 녹음 목소리를 지웠으면(voice._forget) 새로 만든 음성 파일도 지우고 넣지 않는다"""
-
-    try:
-        audio = audio_job.result()
-    except Exception:
-        log.exception("story %s: 나머지 쪽 음성을 만들지 못했습니다", story_id)
-        audio = None
-    finally:
-        after()
     storage = get_storage()
     with db_session.SessionLocal() as db:
         story = db.get(Story, story_id, with_for_update=True)
         if story is None or not story.book:
-            return
-        forgotten = story.narrator_voice_id != voice_id
-        if forgotten and audio:
-            for path in audio[1:]:
-                storage.delete(path)
+            return False
+        if story.narrator_voice_id != voice_id:
+            for i, path in paths.items():
+                if i > 0:
+                    storage.delete(path)
+            final, paths = True, {}
         pages = []
         for i, page in enumerate(story.book["pages"]):
-            page = {k: v for k, v in page.items() if k != "audio_pending"}
-            if audio and not forgotten and i > 0:
-                page["audio_blob_path"] = audio[i]
+            page = dict(page)
+            if i > 0 and (i in paths or (final and page.get("audio_pending"))):
+                page["audio_blob_path"] = paths.get(i)
+                page.pop("audio_pending", None)
             pages.append(page)
-        story.book = {**{k: v for k, v in story.book.items() if k != "audio_pending_since"}, "pages": pages}
+        book = {**story.book, "pages": pages}
+        if final or not any(p.get("audio_pending") for p in pages):
+            book.pop("audio_pending_since", None)
+        story.book = book
         db.commit()
+        return story.narrator_voice_id == voice_id
+
+
+def finish_page_audio(story_id: uuid.UUID, audio_job, voice_id: str | None, after,  # noqa: ANN001
+                      progress: PageAudioProgress | None = None) -> None:
+    """첫 쪽만으로 연 책의 나머지 쪽 음성을 쪽이 끝나는 대로 책에 채운다 (2쪽이 되면 2쪽, 3쪽이 되면 3쪽). 이야기 작업이 성공을 알린 뒤
+    따로 스레드에서 돈다. 음성 스레드는 DB 객체를 건드리지 않으므로 채울 때마다 세션을 새로 열고 행을 잠근 뒤 쪽 음성 자리만 고친다.
+    그사이 녹음 목소리를 지웠으면(voice._forget) 새로 만든 음성 파일도 지우고 넣지 않는다"""
+
+    filled: dict[int, str | None] = {}
+    alive = True
+    try:
+        while progress is not None and alive:
+            got: dict[int, str | None] = {}
+            try:
+                i, path = progress.done.get(timeout=0.5)
+                got[i] = path
+                while True:   # 그사이 함께 끝난 쪽은 한 번에
+                    i, path = progress.done.get_nowait()
+                    got[i] = path
+            except queue.Empty:
+                pass
+            got.pop(0, None)   # 첫 쪽은 성공을 알릴 때 이미 넣었다
+            if got:
+                alive = _fill_page_audio(story_id, voice_id, got, final=False)
+                filled.update(got)
+            elif audio_job.done() and progress.done.empty():
+                break
+        try:
+            audio = audio_job.result()
+        except Exception:
+            log.exception("story %s: 나머지 쪽 음성을 만들지 못했습니다", story_id)
+            audio = None
+    finally:
+        after()
+    if alive:
+        rest = {i: path for i, path in enumerate(audio or []) if i > 0 and i not in filled}
+        _fill_page_audio(story_id, voice_id, rest, final=True)
     log.info("story %s: 나머지 쪽 음성을 채웠습니다", story_id)
 
 
@@ -1288,7 +1331,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     audio_done()
                 except FutureTimeout:
                     audio = [progress.first_path] + [None] * (len(book.pages) - 1)
-                    rest_audio = (audio_job, story.narrator_voice_id, audio_done)
+                    rest_audio = (audio_job, story.narrator_voice_id, audio_done, progress)
                 if cast.get("voices") is not None:
                     story.voice_cast = cast["voices"]
                 _stop_if_cancelled(job_id)
