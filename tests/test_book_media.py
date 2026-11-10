@@ -533,3 +533,21 @@ def test_page_clips_render_new_motions_at_once(monkeypatch):
     clips = jobs.make_page_clips(_story(), _character(), get_storage(), Book("숲", PAGES, [1, 2, 3, 5]))
     # 미리 만든 것이 없는 예전 그림: 네 동작을 RENDER_WORKERS(3) 개씩 함께
     assert len(clips) == 4 and ai.most == jobs.RENDER_WORKERS
+
+
+def test_page_audio_uses_prefetched_narration(monkeypatch):
+    """대본을 흘려 받는 동안 먼저 만든 나레이션 쪽 음성은 다시 만들지 않는다 (2026-11-09)."""
+
+    tts = FakeTTS()
+    monkeypatch.setattr(jobs, "get_tts", lambda *_: tts)
+    pre = jobs.PageAudioPrefetch(tts)
+    pre.page({"page": 1, "stage": "place", "lines": [{"speaker": NARRATOR, "text": "숲에 갔어요."}]})
+    pre.page({"page": 2, "stage": "problem", "lines": [{"speaker": "친구", "text": "안녕"}]})   # 대사 쪽은 미리 안 만든다
+    pages = [Page(1, "place", "walk", [(NARRATOR, "숲에 갔어요.", "")]), Page(2, "problem", "idle", [(NARRATOR, "길을 잃었어요.", "")])]
+    assert pre.take("숲에 갔어요.") == "mp3:숲에 갔어요.".encode()   # 미리 만든 것이 끝나기를 기다린다
+    assert pre.take("숲에 갔어요.") == "mp3:숲에 갔어요.".encode()   # 미리 만든 것이 끝나기를 기다린다
+    before = len(tts.spoken)
+    assert before == 1
+    paths = jobs.make_page_audio(_story(), get_storage(), Book("숲", pages, [1, 2]), None, pre)
+    pre.close()
+    assert all(paths) and tts.spoken[before:] == ["길을 잃었어요."]

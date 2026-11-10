@@ -8,6 +8,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import NamedTuple
 
 import anthropic
@@ -220,6 +221,100 @@ def json_part(text: str) -> str:
         return text[a : b + 1] if b > a else text
 
 
+def cache_blocks(system: str, reference: str) -> list[dict]:
+    """대본 지시문을 Anthropic 캐시 블록으로 (2026-11-09 「이야기 생성 시간 단축」). 글은 그대로 두고 나눠 보내기만 한다.
+
+    - 이야기마다 같은 앞부분(reference 와 같은 데까지: 나레이션 판 약 4,300자, 캐릭터 판은 이름 앞 약 2,200자)
+    - 지시문 전체 (같은 이야기 안에서 고치거나 다시 쓸 때)
+    캐시가 되는 최소 길이보다 짧으면 Anthropic 이 그냥 캐시하지 않는다(오류 아님)"""
+
+    n = 0
+    while n < min(len(system), len(reference)) and system[n] == reference[n]:
+        n += 1
+    blocks = []
+    if 0 < n < len(system):
+        blocks.append({"type": "text", "text": system[:n], "cache_control": {"type": "ephemeral"}})
+    blocks.append({"type": "text", "text": system[n:] if blocks else system, "cache_control": {"type": "ephemeral"}})
+    return blocks
+
+
+def system_text(system: str | list[dict]) -> str:
+    return system if isinstance(system, str) else "".join(b["text"] for b in system)
+
+
+class PageStream:
+    """흘려 받는 대본 JSON 에서 맨 위 "pages": [ … ] 의 쪽 객체가 닫힐 때마다 on_page(dict) 를 부른다
+    (2026-11-09: 대본이 다 끝나기 전에 그 쪽 음성을 먼저 만들려고). 문자열 안 괄호 · 따옴표 이스케이프는 건너뛴다"""
+
+    def __init__(self, on_page: Callable[[dict], None]) -> None:
+        self.on_page, self.buf, self.pos = on_page, "", 0
+        self.state = "seek"          # seek → array → done
+        self.depth, self.start, self.in_str, self.esc = 0, -1, False, False
+
+    def feed(self, chunk: str) -> None:
+        self.buf += chunk
+        if self.state == "seek":
+            i = self.buf.find('"pages"')
+            if i < 0:
+                return
+            j = self.buf.find("[", i)
+            if j < 0:
+                return
+            self.state, self.pos = "array", j + 1
+        while self.state == "array" and self.pos < len(self.buf):
+            c = self.buf[self.pos]
+            if self.in_str:
+                if self.esc:
+                    self.esc = False
+                elif c == "\\":
+                    self.esc = True
+                elif c == '"':
+                    self.in_str = False
+            elif c == '"':
+                self.in_str = True
+            elif c in "{[":
+                if self.depth == 0 and c == "{":
+                    self.start = self.pos
+                self.depth += 1
+            elif c in "}]":
+                if self.depth == 0 and c == "]":
+                    self.state = "done"
+                else:
+                    self.depth -= 1
+                    if self.depth == 0 and c == "}" and self.start >= 0:
+                        try:
+                            self.on_page(json.loads(self.buf[self.start:self.pos + 1]))
+                        except Exception:  # noqa: BLE001 미리 만들기는 덤이라 쪽 하나가 깨져도 대본은 그대로
+                            log.debug("흘려 받은 쪽을 읽지 못함", exc_info=True)
+                        self.start = -1
+            self.pos += 1
+
+
+REPAIR = """방금 쓴 대본에서 아래 문제만 고쳐라.
+{problems}
+- 고친 쪽만, 처음과 같은 쪽 객체 형식으로 "pages" 에 넣는다. 쪽마다 "page" 번호는 그대로다. 고치지 않은 쪽은 넣지 않는다.
+- 장면 계획(scene)을 고쳐야 하면 "scene" 을 처음 형식 그대로 통째로 넣는다. 아니면 넣지 않는다.
+- 쪽 수 · 단계(stage) · 순서는 바꾸지 않는다. 다른 쪽 내용과 이어지게 쓴다.
+JSON 으로만 답한다. {{"pages": [ … ], "scene": {{ … }}}}"""
+
+
+def merge_repair(raw: str, fix: str) -> str:
+    """고친 쪽(과 장면 계획)을 원래 대본 JSON 에 끼운다. 형식이 틀리면 ValueError"""
+
+    try:
+        data, got = json.loads(raw), json.loads(fix)
+        for page in got.get("pages") or []:
+            k = int(page["page"])
+            if not 1 <= k <= len(data["pages"]):
+                raise ValueError(f"없는 쪽 {k}")
+            data["pages"][k - 1] = page
+        if got.get("scene"):
+            data["scene"] = got["scene"]
+    except (KeyError, TypeError, AttributeError, json.JSONDecodeError) as e:
+        raise ValueError(f"고친 쪽 형식이 아님: {e}") from e
+    return json.dumps(data, ensure_ascii=False)
+
+
 class StoryWriter:
     def __init__(
         self,
@@ -373,8 +468,12 @@ class StoryWriter:
         extras: dict[str, str] | None = None,
         opening: str | None = None,
         hero_form: dict | None = None,
+        on_page: Callable[[dict], None] | None = None,
     ) -> Book:
         """긴 이야기. 네 칸(과 아이가 말로 덧붙인 말)을 뼈대로 쪽 단위 대본을 만든다.
+
+        on_page: 첫 시도를 흘려 받으며 쪽 객체가 닫힐 때마다 부른다 (부르는 쪽이 그 쪽 음성을 먼저 만든다).
+        검사에 걸리면 먼저 틀린 쪽만 고쳐 받고(REPAIR, 출력이 짧아 빠르다), 그래도 안 되면 처음부터 다시 쓴다 (2026-11-09).
 
         형식과 지시문은 services/book.py.
 
@@ -389,42 +488,90 @@ class StoryWriter:
             self.check_input(name)
 
         system = book_prompt(pages, characters, name, extras, place=choices.get("place"), hero_form=hero_form)
+        # 이야기마다 같은 앞부분은 캐시한다: 이름 · 장소 · 덧붙인 말 · 주인공 모습만 다른 지시문과 겹치는 데까지
+        blocks = cache_blocks(system, book_prompt(pages, characters, "§", None, place=None, hero_form=None))
         # 아이 입력이 걸리면 위에서 막는다(StoryBlocked). AI 가 쓴 글이 걸리면 아이 탓이 아니므로
         # 다시 쓰게 하고, 끝내 걸리면 OpenAIError — 부르는 쪽이 틀 문장 그림책으로 대신한다
         # (「넘어졌어요」 이야기의 대본이 violence 로 걸린 적 있음, 2026-10-12)
         best = None
-        for _ in range(3):
-            raw = self.book_completion(system, user_input)
-            try:
-                book = parse_book(raw, name)
-            except ValueError as e:
-                log.info("그림책 대본 형식이 틀려 다시 씁니다: %s", e)
-                continue
-            # 「내가 말한 부분」은 아이가 말로 덧붙인 단계에만. GPT 가 카드 글자를 적어 와도 지운다
-            for p in book.pages:
-                if p.stage not in spoken:
-                    p.child_words = ""
-            try:
-                self.check_input(book.text())
-            except StoryBlocked:
-                log.info("AI 가 쓴 그림책 대본이 moderation 에 걸려 다시 씁니다")
+        for attempt in range(3):
+            raw = self.book_completion(blocks, user_input, on_page if attempt == 0 else None)
+            book = self._accept(raw, name, spoken)
+            if book is None:
                 continue
             best = book
             problems = book_problems(book, choices, pages, characters)
             if not problems:
                 break
+            # 쪽 배치가 틀린 것은 고치기로 안 된다 (쪽 수 · 단계를 바꾸지 못하게 했다), 처음부터 다시
+            if not any(x.startswith("쪽 배치") for x in problems):
+                try:
+                    fixed = merge_repair(raw, self.book_fix(blocks, user_input, raw, problems))
+                except (ValueError, anthropic.APIError, OpenAIError) as e:
+                    log.info("틀린 쪽만 고치기 실패, 처음부터 다시 씁니다: %s", e)
+                else:
+                    repaired = self._accept(fixed, name, spoken)
+                    if repaired is not None:
+                        left = book_problems(repaired, choices, pages, characters)
+                        best = repaired if len(left) <= len(problems) else best
+                        if not left:
+                            log.info("그림책 대본의 틀린 쪽만 고쳤습니다: %s", "; ".join(problems))
+                            break
+                        problems = left
             log.info("그림책 대본을 다시 씁니다: %s", "; ".join(problems))
         if best is None:
             raise OpenAIError("쓸 수 있는 그림책 대본을 받지 못했다")
         return best
 
-    def book_completion(self, system: str, user: str) -> str:
-        """그림책 대본 JSON 한 번. Claude 가 있으면 Claude, 실패하면 그 시도만 OpenAI 모델로."""
+    def _accept(self, raw: str, name: str | None, spoken: set[str]) -> Book | None:
+        """대본 JSON 을 Book 으로 읽고 검열까지. 형식이 틀리거나 AI 글이 검열에 걸리면 None (다시 쓴다)"""
+
+        try:
+            book = parse_book(raw, name)
+        except ValueError as e:
+            log.info("그림책 대본 형식이 틀려 다시 씁니다: %s", e)
+            return None
+        # 「내가 말한 부분」은 아이가 말로 덧붙인 단계에만. GPT 가 카드 글자를 적어 와도 지운다
+        for p in book.pages:
+            if p.stage not in spoken:
+                p.child_words = ""
+        try:
+            self.check_input(book.text())
+        except StoryBlocked:
+            log.info("AI 가 쓴 그림책 대본이 moderation 에 걸려 다시 씁니다")
+            return None
+        return book
+
+    def book_fix(self, system: str | list[dict], user: str, raw: str, problems: list[str]) -> str:
+        """방금 쓴 대본의 틀린 쪽(과 장면 계획)만 고쳐 받는다. 고친 쪽만 돌아와 출력이 짧다 (생각은 적게)"""
+
+        ask = REPAIR.format(problems="\n".join(f"- {x}" for x in problems))
+        msgs = [{"role": "user", "content": user}, {"role": "assistant", "content": raw}, {"role": "user", "content": ask}]
+        s = get_settings()
+        if self.claude is not None and s.story_book_provider == "anthropic":
+            res = self.claude.messages.create(
+                model=s.story_book_claude_model, max_tokens=8000, system=system, messages=msgs,
+                output_config={"effort": "low"},
+            )
+            self._count(res)
+            return json_part("".join(b.text for b in res.content if b.type == "text"))
+        res = self.client.chat.completions.create(
+            model=s.story_book_model,
+            messages=[{"role": "system", "content": system_text(system)}, *msgs],
+            response_format={"type": "json_object"},
+            **({"max_completion_tokens": 8000} if s.story_book_model.startswith(("gpt-5", "o3", "o4")) else {"max_tokens": 2000}),
+        )
+        return res.choices[0].message.content or ""
+
+    def book_completion(self, system: str | list[dict], user: str, on_page: Callable[[dict], None] | None = None) -> str:
+        """그림책 대본 JSON 한 번. Claude 가 있으면 Claude, 실패하면 그 시도만 OpenAI 모델로.
+
+        on_page 가 있으면 흘려 받으며 쪽 객체가 닫힐 때마다 부른다 (PageStream)."""
 
         s = get_settings()
         if self.claude is not None and s.story_book_provider == "anthropic":
             try:
-                res = self.claude.messages.create(
+                kw = dict(
                     model=s.story_book_claude_model,
                     # 생각 토큰도 여기에 든다. 16000 을 넘기면 스트리밍으로 받아야 한다
                     max_tokens=16000,
@@ -432,6 +579,14 @@ class StoryWriter:
                     messages=[{"role": "user", "content": user}],
                     output_config={"effort": s.story_book_effort},
                 )
+                if on_page is not None and hasattr(self.claude.messages, "stream"):
+                    pager = PageStream(on_page)
+                    with self.claude.messages.stream(**kw) as st:
+                        for chunk in st.text_stream:
+                            pager.feed(chunk)
+                        res = st.get_final_message()
+                else:
+                    res = self.claude.messages.create(**kw)
                 self._count(res)
                 text = "".join(b.text for b in res.content if b.type == "text")
                 if res.stop_reason == "max_tokens":
@@ -447,7 +602,7 @@ class StoryWriter:
             params = {"max_completion_tokens": 8000}
         res = self.client.chat.completions.create(
             model=model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            messages=[{"role": "system", "content": system_text(system)}, {"role": "user", "content": user}],
             response_format={"type": "json_object"},
             **params,
         )

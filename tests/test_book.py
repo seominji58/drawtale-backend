@@ -312,7 +312,10 @@ def test_book_uses_claude_and_strips_fence(monkeypatch):
     kw = claude.calls[0]
     assert kw["model"] == "claude-opus-5-5"
     assert kw["output_config"] == {"effort": "medium"}
-    assert "그림책 대본" in kw["system"]
+    # 지시문은 캐시 블록으로 나눠 보낸다 (2026-11-09), 글은 그대로, 마지막 블록까지 캐시
+    from app.services.story_writer import system_text
+    assert "그림책 대본" in system_text(kw["system"])
+    assert all(b["cache_control"] == {"type": "ephemeral"} for b in kw["system"])
 
 
 def test_book_falls_back_to_openai_when_claude_fails(monkeypatch):
@@ -355,3 +358,83 @@ def test_prompt_lists_locations_for_card_place():
     assert "school-cafeteria(급식실)" in book_prompt(8, False, None, place="학교")
     # 말로 정한 장소(카드에 없음)는 비워 두게
     assert 'location 은 "" 로 둔다' in book_prompt(8, False, None, place="할머니 댁")
+
+
+# 대본 시간 단축 (2026-11-09): 캐시 블록 · 흘려 받으며 쪽 넘기기 · 틀린 쪽만 고치기
+def test_cache_blocks_split_at_shared_part():
+    from app.services.story_writer import cache_blocks, system_text
+
+    blocks = cache_blocks("같은 앞부분 / 하루", "같은 앞부분 / §")
+    assert system_text(blocks) == "같은 앞부분 / 하루"
+    assert blocks[0]["text"] == "같은 앞부분 / " and len(blocks) == 2
+    assert all(b["cache_control"] == {"type": "ephemeral"} for b in blocks)
+    assert len(cache_blocks("완전히 다름", "전혀")) == 1
+
+
+def test_page_stream_emits_each_page_once_it_closes():
+    from app.services.story_writer import PageStream
+
+    pages = [_page(1, "place", "중괄호 { 와 따옴표 \" 가 든 글"), _page(2, "problem", "둘째 쪽 ] 대괄호")]
+    raw = "```json\n" + _raw(pages, order=(1, 2, 2, 2)) + "\n```"
+    got = []
+    s = PageStream(got.append)
+    for ch in raw:       # 한 글자씩 흘려도
+        s.feed(ch)
+    assert [p["page"] for p in got] == [1, 2]
+    assert got[0]["lines"][0]["text"] == "중괄호 { 와 따옴표 \" 가 든 글"
+
+
+def test_merge_repair_replaces_only_fixed_pages():
+    from app.services.story_writer import merge_repair
+
+    raw = _raw(GOOD)
+    fixed = json.loads(merge_repair(raw, json.dumps({"pages": [_page(2, "problem", "고친 둘째 쪽")]})))
+    assert fixed["pages"][1]["lines"][0]["text"] == "고친 둘째 쪽"
+    assert fixed["pages"][0] == GOOD[0] and fixed["scene"] == json.loads(raw)["scene"]
+    with pytest.raises(ValueError):
+        merge_repair(raw, json.dumps({"pages": [_page(99, "result", "없는 쪽")]}))
+
+
+def test_book_fixes_only_wrong_pages_instead_of_rewriting(monkeypatch):
+    """첫 문장이 「햇살」이면 1쪽만 고쳐 받는다 (전에는 처음부터 다시 썼다)."""
+
+    bad = [_page(1, "place", "햇살이 가득한 날 나는 숲에 갔어요."), *GOOD[1:]]
+    fix = json.dumps({"pages": [_page(1, "place", "오늘 나는 숲에 갔어요.")]})
+    claude = _FakeClaude([_raw(bad), fix])
+    w = _writer(monkeypatch, claude)
+    book = w.write_book(CHOICES, {"problem"}, 7, False)
+    assert book.pages[0].text() == "오늘 나는 숲에 갔어요."
+    assert len(claude.calls) == 2                      # 대본 한 번 + 고치기 한 번
+    repair = claude.calls[1]
+    assert [m["role"] for m in repair["messages"]] == ["user", "assistant", "user"]
+    assert "햇살" in repair["messages"][2]["content"] and repair["output_config"] == {"effort": "low"}
+
+
+def test_book_streams_pages_to_callback(monkeypatch):
+    from types import SimpleNamespace
+
+    raw = _raw(GOOD)
+
+    class StreamClaude(_FakeClaude):
+        def stream(self, **kw):
+            outer = self
+            outer.calls.append(kw)
+
+            class _S:
+                text_stream = iter([raw[i:i + 7] for i in range(0, len(raw), 7)])
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def get_final_message(self):
+                    return SimpleNamespace(content=[SimpleNamespace(type="text", text=raw)], stop_reason="end_turn")
+
+            return _S()
+
+    seen = []
+    w = _writer(monkeypatch, StreamClaude([]))
+    book = w.write_book(CHOICES, {"problem"}, 7, False, on_page=lambda p: seen.append(p["page"]))
+    assert seen == [1, 2, 3, 4, 5, 6, 7] and len(book.pages) == 7

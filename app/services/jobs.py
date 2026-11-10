@@ -19,7 +19,7 @@ from app.schemas.common import JobStatus, Joint
 from app.schemas.story import StoryLength, VoiceMode
 from app.services import card_stories
 from app.services.ai_client import get_ai_client
-from app.services.book import STAGES, Book, fallback_book
+from app.services.book import STAGES, Book, Page, fallback_book, page_lines
 from app.services.originals import delete_original
 from app.services import forms
 from app.services.page_motions import FALLBACK, NEW_ACTIONS, cap_new, liven
@@ -481,7 +481,7 @@ def write_story_script(story: Story, form: str | None = None) -> Script | None:
     return script
 
 
-def write_story_book(story: Story, form: str = forms.DEFAULT) -> Book:
+def write_story_book(story: Story, form: str = forms.DEFAULT, on_page=None) -> Book:  # noqa: ANN001
     """긴 이야기 대본. 키가 없거나 실패하면 틀 문장 그림책을 쓴다 (부적절한 내용이면 막는다).
     주인공이 사람이 아닌 형태면(pt_docs 19) 대본 AI 에 그 모습을 알린다 — 손을 쓰는 행동을 쓰지 않게."""
 
@@ -504,6 +504,7 @@ def write_story_book(story: Story, form: str = forms.DEFAULT) -> Book:
             name,
             story.extras,
             hero_form=None if form == forms.DEFAULT else forms.get(form),
+            on_page=on_page,
         )
     except StoryBlocked:
         raise
@@ -747,7 +748,55 @@ def _tts_retry(make):  # noqa: ANN001
     return None
 
 
-def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = None) -> list[str | None]:
+_tts_slots: threading.BoundedSemaphore | None = None
+
+
+def tts_slot() -> threading.BoundedSemaphore:
+    """ElevenLabs 동시 호출을 쪽 음성 만들기 · 미리 만들기 합쳐 page_audio_workers 개까지 (계정 한도를 넘지 않게)"""
+
+    global _tts_slots
+    if _tts_slots is None:
+        _tts_slots = threading.BoundedSemaphore(max(1, PAGE_AUDIO_WORKERS or get_settings().page_audio_workers))
+    return _tts_slots
+
+
+class PageAudioPrefetch:
+    """대본을 흘려 받는 동안 쪽 음성을 먼저 만든다 (2026-11-09 「이야기 생성 시간 단축」, 대본 쓰는 시간과 음성 만드는 시간이 겹친다).
+
+    나레이션만 있는 쪽만: 대사가 있는 쪽은 인물 목소리 배정이 대본 전체(인물 목록)를 봐야 정해진다. 최종 대본에서 글이 똑같은
+    쪽만 이 음성을 쓰고(take), 고쳐진 쪽은 make_page_audio 가 다시 만든다. 다른 스레드에서 돌아 DB 객체를 건드리지 않는다"""
+
+    def __init__(self, tts) -> None:  # noqa: ANN001
+        self.tts = tts
+        self.ex = ThreadPoolExecutor(max(1, PAGE_AUDIO_WORKERS or get_settings().page_audio_workers))
+        self.jobs: dict[str, object] = {}
+
+    def page(self, obj: dict) -> None:
+        lines = page_lines(obj)
+        if not lines or any(s != NARRATOR for s, _, _ in lines):
+            return
+        text = Page(0, "", "", lines).text()
+        if text not in self.jobs:
+            self.jobs[text] = self.ex.submit(self._speak, text)
+
+    def _speak(self, text: str) -> bytes | None:
+        try:
+            with tts_slot():
+                return _tts_retry(lambda: self.tts.speak(text))
+        except Exception:
+            log.warning("쪽 음성 미리 만들기 실패 (본 만들기에서 다시)", exc_info=True)
+            return None
+
+    def take(self, text: str) -> bytes | None:
+        job = self.jobs.get(text)
+        return job.result() if job is not None else None
+
+    def close(self) -> None:
+        self.ex.shutdown(wait=False, cancel_futures=True)
+
+
+def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = None,
+                    prefetch: PageAudioPrefetch | None = None) -> list[str | None]:
     """쪽마다 MP3. 쪽으로 나눠도 읽는 글자 수는 이야기 전체와 같다 (음성 비용이 늘지 않는다).
 
     캐릭터 목소리 판이고 ElevenLabs 면 대사가 있는 쪽은 인물 목소리로 읽는다. 인물 → 목소리는
@@ -772,10 +821,16 @@ def make_page_audio(story: Story, storage, book: Book, cast_out: dict | None = N
 
     def one(page) -> str | None:
         try:
+            audio = None
             if voices and any(s != NARRATOR for s, _, _ in page.lines):
-                audio = _tts_retry(lambda: tts.dialogue([Line(s, t, e) for s, t, e in page.lines], voices))
+                with tts_slot():
+                    audio = _tts_retry(lambda: tts.dialogue([Line(s, t, e) for s, t, e in page.lines], voices))
             else:
-                audio = _tts_retry(lambda: tts.speak(page.text()))
+                # 대본을 흘려 받는 동안 같은 글로 먼저 만든 것이 있으면 그것 (PageAudioPrefetch)
+                audio = prefetch.take(page.text()) if prefetch is not None else None
+                if audio is None:
+                    with tts_slot():
+                        audio = _tts_retry(lambda: tts.speak(page.text()))
             return storage.save(f"results/{story.id}/page{page.page:02d}.mp3", audio)
         except Exception:
             log.exception("%d쪽 음성 %d번 실패, 그 쪽은 음성 없이 (화면은 읽지 않는다)", page.page, TTS_TRIES)
@@ -1087,10 +1142,13 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     story.protagonist_name = name
             if story.length == StoryLength.long:
                 # 긴 이야기: 쪽 단위 대본, 쪽마다 음성 · 동작 영상. 이야기 전체 MP3 는 만들지 않는다
+                # 새로 쓰는 대본은 흘려 받으며 나레이션 쪽 음성을 먼저 만든다 (PageAudioPrefetch, 2026-11-09)
+                tts = get_tts(story.narrator_voice_id) if stored is None else None
+                prefetch = PageAudioPrefetch(tts) if tts is not None else None
                 book = (
                     card_stories.book_from_payload(stored.payload, name)
                     if stored is not None
-                    else write_story_book(story, character.form)
+                    else write_story_book(story, character.form, on_page=prefetch.page if prefetch else None)
                 )
                 # 가만히 쪽을 쪽 글에 맞는 동작으로, 새로 렌더할 동작은 이야기 하나에 셋까지 (pt_docs 17)
                 cap_new(
@@ -1109,7 +1167,7 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     audio_job = bg.submit(
                         (lambda: cached_page_audio(story, storage, book, audio_key, cast))
                         if shared_audio
-                        else (lambda: make_page_audio(story, storage, book, cast))
+                        else (lambda: make_page_audio(story, storage, book, cast, prefetch))
                     )
                     wait_for_motion_clips(db, character, {PAGE_MOTIONS.get(p.action) for p in book.pages} - {None}, stop)
                     _stop_if_cancelled(job_id)
@@ -1117,6 +1175,8 @@ def run_story_job(job_id: uuid.UUID) -> None:
                     audio = audio_job.result()
                 if cast.get("voices") is not None:
                     story.voice_cast = cast["voices"]
+                if prefetch is not None:
+                    prefetch.close()
                 _stop_if_cancelled(job_id)
                 data = book.to_json()
                 for page, path in zip(data["pages"], audio, strict=True):

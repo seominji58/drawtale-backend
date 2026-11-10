@@ -485,6 +485,20 @@ def book_user_message(
     return "\n".join(lines)
 
 
+def page_lines(p: dict) -> list[tuple[str, str, str]]:
+    """대본 JSON 쪽 객체의 (말하는 이, 글, 감정). parse_book 과 쪽 음성 미리 만들기(jobs.PageAudioPrefetch)가 같은 규칙으로 읽는다"""
+
+    return [
+        (
+            str(ln.get("speaker") or NARRATOR).strip() or NARRATOR,
+            str(ln["text"]).strip(),
+            str(ln.get("emotion") or "").strip(),
+        )
+        for ln in p["lines"]
+        if str(ln.get("text") or "").strip()
+    ]
+
+
 def parse_book(raw: str, name: str | None = None) -> Book:
     """GPT 가 준 JSON 을 Book 으로. 형식이 틀리면 ValueError.
 
@@ -498,15 +512,7 @@ def parse_book(raw: str, name: str | None = None) -> Book:
             stage = str(p.get("stage") or "").strip()
             if stage not in STAGES:
                 raise ValueError(f"{i}쪽 stage {stage!r}")
-            lines = [
-                (
-                    str(ln.get("speaker") or NARRATOR).strip() or NARRATOR,
-                    str(ln["text"]).strip(),
-                    str(ln.get("emotion") or "").strip(),
-                )
-                for ln in p["lines"]
-                if str(ln.get("text") or "").strip()
-            ]
+            lines = page_lines(p)
             if not lines:
                 raise ValueError(f"{i}쪽이 비었다")
             action = str(p.get("action") or "idle").strip()
