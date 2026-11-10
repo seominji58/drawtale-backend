@@ -419,6 +419,76 @@ def body_rules(form: dict) -> str:
     return BODY_RULES_BY_FORM.get(form.get("id", ""), BODY_RULES_BY_FORM["quadruped"]) + "\n" + _NO_GUESS
 
 
+# 몸 규칙 자동 검사 (2026-11-10). 지시문에 몸 규칙을 적어도 날개형 · 지느러미형 주인공이 「한 걸음」 · 「발길을 멈췄」 ·
+# 「바닥을 짚고」 · 「먼지를 툭툭 털」처럼 걷고 손 쓰는 글이 나왔다 (GPT 날개형 20편 시험, Opus 검수 몸 지적 46건).
+# 손 · 팔만 보던 batch_form_stories.HERO_HAND 로는 못 잡아 형태마다 못 쓰는 낱말을 찾는다.
+# 낱말 앞에서 가장 가까운 주어가 다른 인물(친구가 · 엄마는 · 콩이가)이면 그 인물의 움직임이라 넘어간다.
+# 주어가 없으면 주인공으로 본다(우리말은 주어를 자주 뺀다).
+# 「다가갔어요」 · 「앞으로 나아갔어요」처럼 걷는 것으로 「읽힐 수 있는」 글은 낱말로 못 가려 검수(사람 · AI)에 맡긴다.
+# 카드 글자에 든 「살금살금」 · 「툭툭 털고」는 막지 않는다: 카드 검사가 그 낱말을 찾고, 날개 · 몸을 털거나 살금살금 날아도 된다
+_WALK = [
+    r"(?<!말을 )(?<!말 )(?:걸어(?=가|갔|와|왔|오|서|다니|도|요)|걸었(?=어|다|고|지))|걷(?=고|는|기|다|던|자)|(?<![가-힣])걸음|뚜벅|아장아장|성큼",
+    r"달려(?=가|갔|와|왔|오|서|나|들|요)|달렸|달리(?=고|는|기|다|며|자)",
+    r"뛰어(?=가|갔|와|왔|오|서|다니|올|내|넘|요)|뛰었|뛰(?=고|는|며|자|기)|점프|폴짝|깡충|껑충|콩콩(?! 소리)",
+    r"(?<![가-힣])(?:발걸음|발길|발끝|발밑|발바닥|발가락|발뒤꿈치|두 발|발로|발을)(?! 대신)|내 발자국",
+    # 「내려앉았어요」 · 「가라앉았어요」는 나는 몸도 된다 (서 있기 · 내려앉기는 Opus 도 넘어갔다, 11/10)
+    r"(?<!내려)(?<!가라)앉(?=아|았|고|는|을|자)|일어서|일어섰|엎드|웅크|쪼그|무릎|몸을 숙|(?<![가-힣])어깨",
+]
+_HAND = [
+    # 「그 손끝을 따라」는 남의 손이다
+    r"(?<![가-힣])(?<!그 )손(?=을|으로|에|이|가|뼉|짓|가락|바닥|끝|등|목|\s)|(?<![가-힣])(?<!그 )팔(?=을|로|에|이|짱|꿈치|\s)",
+    r"짚(?=고|어|었|으)|가리키|가리켰|주워|주웠|쥐(?=고|었|어)|박수|건넸|건네(?=\s*주|줬|었)",
+    r"들고 (?=가|갔|와|왔|오|다니)|옮겼|옮기(?=고|는|며|다)|집어 (?=들|올)|집었|안고|껴안",
+]
+_QUAD = [r"두 발로 (?:서|섰|일어)|엎드|웅크|꼬리"]
+_BANNED = {
+    "quadruped": _HAND + _QUAD,
+    **{f: _WALK + _HAND for f in ("chain", "finned", "winged", "radial")},
+}
+# 주인공이 아닌 주어. 「가슴이 콩콩 뛰었어요」의 가슴 · 심장 · 마음도 여기에 둔다
+_OTHERS = (
+    "친구|친구들|엄마|아빠|선생님|할머니|할아버지|아기[가-힣]{0,2}|아이|아이들|언니|오빠|누나|형|동생|아저씨|아줌마|아주머니|"
+    "어른|어른들|이모|삼촌|가족|사람|사람들|경찰관|경찰|소방관|의사|간호사|기사님|점원|직원|사장님|왕자|공주|요정|로봇|유령|외계인|"
+    "공룡|괴물|강아지|고양이|토끼|곰|다람쥐|오리|개구리|새|새들|나비|사슴|여우|원숭이|코끼리|사자|호랑이|펭귄|거북|거북이|"
+    "달팽이|개미|벌|물고기|고래|문어|해파리|부엉이|올빼미|참새|비둘기|병아리|닭|돼지|기린|하마|악어|뱀|용|가슴|심장|마음|모두|누군가"
+)
+_PARTICLE = r"(?:이가|이는|이도|이|가|은|는|도|께서)(?![가-힣])"
+_QUOTE = re.compile(r"[“\"][^”\"]*[”\"]")
+
+
+def body_problems(book: Book, form: dict | None) -> list[str]:
+    """사람이 아닌 주인공이 그 몸으로 못 하는 움직임을 하는 쪽. 사람(형태 없음)이면 늘 빈 목록"""
+
+    banned = _BANNED.get((form or {}).get("id", ""))
+    if not banned:
+        return []
+    hero_names = [n for n in (book.protagonist,) if n and n not in (NARRATOR, PROTAGONIST)]
+    hero = re.compile(r"(?<![가-힣])(?:나는|나도|내가|나를|나만|우리는|우리도|우리가|우리 둘|"
+                      + "".join(f"{re.escape(n)}(?:이)?(?:가|는|도|을|를)|" for n in hero_names) + r"나(?=\s))")
+    names = [re.escape(n) for n in (*book.cast, *book.character_sheet) if n not in hero_names]
+    other = re.compile(r"(?<![가-힣])(?:" + "|".join([*names, _OTHERS]) + r")(?:들)?" + _PARTICLE)
+    kind = (form or {}).get("kid_label") or "이 모습"
+    out = []
+    for p in book.pages:
+        found = []
+        for speaker, text, _ in p.lines:
+            if speaker not in (NARRATOR, PROTAGONIST):
+                continue   # 다른 인물 대사의 「나」는 그 인물이다
+            for sent in _SENT.findall(_QUOTE.sub(" ", text) + "."):
+                for pattern in banned:
+                    for m in re.finditer(pattern, sent):
+                        before = sent[: m.start()]
+                        last_hero = max((x.end() for x in hero.finditer(before)), default=-1)
+                        last_other = max((x.end() for x in other.finditer(before)), default=-1)
+                        if last_other > last_hero:
+                            continue
+                        found.append(m.group(0).strip())
+        if found:
+            words = " · ".join(dict.fromkeys(found))
+            out.append(f"{p.page}쪽 주인공 몸 규칙: 주인공은 {kind}라 「{words}」 같은 움직임을 할 수 없다 (몸 규칙의 움직임으로 바꾼다)")
+    return out
+
+
 # 짧은 이야기(네 문장)판 — 쪽 동작이 없고, 아이가 고른 행동 카드의 뜻은 바꾸지 않는다 (SYSTEM_PROMPT 「카드의 뜻」).
 # 손으로 하는 카드는 뜻을 살려 몸으로 바꿔 쓴다 (11/5 — 전에는 짧은 이야기에 형태를 알리지 않아 고양이가 손을 흔들었다)
 SHORT_FORM_RULE = """
@@ -631,8 +701,10 @@ def scene_problems(book: Book) -> list[str]:
 _SENT = re.compile(r"[^.!?。]+[.!?。]")
 
 
-def book_problems(book: Book, choices: dict[str, str], pages: int, characters: bool) -> list[str]:
-    """다시 쓰게 할 만큼 어긋난 것. 비어 있으면 받아들인다."""
+def book_problems(
+    book: Book, choices: dict[str, str], pages: int, characters: bool, hero_form: dict | None = None
+) -> list[str]:
+    """다시 쓰게 할 만큼 어긋난 것. 비어 있으면 받아들인다. hero_form 이 있으면 주인공 몸 규칙도 본다."""
 
     out = []
     want = split_pages(pages)
@@ -650,7 +722,7 @@ def book_problems(book: Book, choices: dict[str, str], pages: int, characters: b
         text = " ".join(p.text() for p in book.pages if p.stage == s)
         if not mentions(choices[s], text):
             out.append(f"{STAGE_KO[s]} 「{choices[s]}」 가 그 단계 쪽에 없다")
-    return out + scene_problems(book)
+    return out + body_problems(book, hero_form) + scene_problems(book)
 
 
 def mentions(card: str, text: str) -> bool:

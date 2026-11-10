@@ -137,6 +137,24 @@ USER_TEMPLATE = """장소: {place}
 MODERATION_MODEL = "omni-moderation-latest"
 STORY_MODEL = "gpt-4o-mini"
 
+# AI 가 쓴 글에만 쓰는 검열 기준 (2026-11-10). 아이 입력은 check_input 그대로 어느 항목이든 걸리면 막는다.
+# 「넘어졌어요」 · 「공룡」 카드 대본이 가벼운 넘어짐 · 놀람에도 violence 로 세 번 내리 걸려 틀 문장 그림책으로 떨어졌다
+# (11/10 아이 말 시험 4 · 13번, Sonnet · Opus 모두). 미리 만든 대본은 같은 카드에서 violence 0.2 안팎이었다.
+# 아래 가벼운 항목만 걸렸고 점수가 기준보다 낮으면 통과. 피 · 자해 · 성 · 혐오 · 위협 같은 항목은 하나라도 걸리면 막는다.
+# 미리 만드는 카드 이야기는 사람 · AI 검토를 또 거쳐 기준이 다르다 (scripts/batch_card_stories.PREGEN_VIOLENCE_MAX)
+OUTPUT_SOFT = ("violence", "harassment")
+OUTPUT_SOFT_MAX = 0.7
+
+
+def output_blocked(result, soft: tuple[str, ...] = OUTPUT_SOFT, soft_max: float = OUTPUT_SOFT_MAX) -> list[str]:
+    """moderation 결과 하나에서 막아야 할 항목. 비면 통과"""
+
+    if not result.flagged:
+        return []
+    scores = result.category_scores.model_dump()
+    flagged = [k for k, v in result.categories.model_dump().items() if v]
+    return [k for k in flagged if k not in soft or scores.get(k, 1.0) >= soft_max]
+
 
 class StoryBlocked(Exception):
     """부적절한 내용이 감지되어 이야기를 만들지 않았다."""
@@ -399,6 +417,18 @@ class StoryWriter:
             log.warning("입력이 moderation에 걸림: %s", categories)
             raise StoryBlocked(", ".join(categories))
 
+    def check_output(self, text: str) -> None:
+        """AI 가 쓴 이야기 검사. 가벼운 항목이 낮은 점수로만 걸리면 통과시킨다 (OUTPUT_SOFT)"""
+
+        res = self.client.moderations.create(model=MODERATION_MODEL, input=text).results[0]
+        blocked = output_blocked(res)
+        if res.flagged:
+            scores = res.category_scores.model_dump()
+            got = ", ".join(f"{k} {scores.get(k, 0):.2f}" for k, v in res.categories.model_dump().items() if v)
+            log.info("AI 글이 moderation 에 걸림 (%s): %s", got, "막음" if blocked else "기준 아래라 통과")
+        if blocked:
+            raise StoryBlocked(", ".join(blocked))
+
     def write(self, place: str, problem: str, action: str, result: str, hero_form: dict | None = None) -> str:
         user_input = USER_TEMPLATE.format(
             place=place, problem=problem, action=action, result=result
@@ -414,7 +444,7 @@ class StoryWriter:
             raise OpenAIError("빈 응답")
 
         # 생성된 이야기도 한 번 더 확인한다
-        self.check_input(text)
+        self.check_output(text)
         return text
 
     def write_script(
@@ -455,7 +485,7 @@ class StoryWriter:
 
         if script is None:
             raise ValueError("형식이 맞는 대본을 받지 못했다")  # 부르는 쪽이 나레이션 판으로 대신한다
-        self.check_input(script_text(script))
+        self.check_output(script_text(script))
         return script
 
     def write_book(
@@ -500,7 +530,7 @@ class StoryWriter:
             if book is None:
                 continue
             best = book
-            problems = book_problems(book, choices, pages, characters)
+            problems = book_problems(book, choices, pages, characters, hero_form)
             if not problems:
                 break
             # 쪽 배치가 틀린 것은 고치기로 안 된다 (쪽 수 · 단계를 바꾸지 못하게 했다), 처음부터 다시
@@ -512,7 +542,7 @@ class StoryWriter:
                 else:
                     repaired = self._accept(fixed, name, spoken)
                     if repaired is not None:
-                        left = book_problems(repaired, choices, pages, characters)
+                        left = book_problems(repaired, choices, pages, characters, hero_form)
                         best = repaired if len(left) <= len(problems) else best
                         if not left:
                             log.info("그림책 대본의 틀린 쪽만 고쳤습니다: %s", "; ".join(problems))
@@ -536,7 +566,7 @@ class StoryWriter:
             if p.stage not in spoken:
                 p.child_words = ""
         try:
-            self.check_input(book.text())
+            self.check_output(book.text())
         except StoryBlocked:
             log.info("AI 가 쓴 그림책 대본이 moderation 에 걸려 다시 씁니다")
             return None

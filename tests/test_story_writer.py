@@ -118,7 +118,37 @@ def test_short_story_is_written_by_claude(monkeypatch):
     w = StoryWriter("sk-test")
     w.claude = _FakeClaude("나는 숲에 갔어요. 길을 잃었어요. 그 자리에서 기다렸어요. 길을 찾았어요.")
     monkeypatch.setattr(w, "check_input", lambda text: None)
+    monkeypatch.setattr(w, "check_output", lambda text: None)
     text = w.write("숲", "길을 잃었어요", "그 자리에서 기다렸어요", "길을 찾았어요")
     assert text.startswith("나는 숲에 갔어요")
     assert w.last_model.startswith("claude")
     assert w.claude.calls[0]["output_config"] == {"effort": "low"}
+
+
+def _mod(flags: dict, scores: dict):
+    """moderation 결과 하나 흉내 (categories · category_scores 는 model_dump 만 쓴다)"""
+
+    dump = lambda d: type("D", (), {"model_dump": lambda self: d})()   # noqa: E731
+    return type("R", (), {"flagged": any(flags.values()), "categories": dump(flags), "category_scores": dump(scores)})()
+
+
+def test_output_moderation_lets_mild_ai_text_through():
+    """AI 가 쓴 글은 violence · harassment 가 낮은 점수로만 걸리면 통과, 다른 항목은 막는다 (2026-11-10).
+    아이 입력은 check_input 그대로 엄격하다"""
+
+    from app.services.story_writer import OUTPUT_SOFT_MAX, StoryBlocked, StoryWriter, output_blocked
+
+    assert output_blocked(_mod({"violence": False}, {"violence": 0.1})) == []
+    assert output_blocked(_mod({"violence": True}, {"violence": 0.55})) == []          # 넘어짐 · 놀람
+    assert output_blocked(_mod({"violence": True}, {"violence": OUTPUT_SOFT_MAX})) == ["violence"]
+    assert output_blocked(_mod({"violence": True, "violence_graphic": True},
+                               {"violence": 0.3, "violence_graphic": 0.6})) == ["violence_graphic"]
+    assert output_blocked(_mod({"self_harm": True}, {"self_harm": 0.2})) == ["self_harm"]
+
+    mild = _mod({"violence": True}, {"violence": 0.55})
+    w = StoryWriter("sk-test")
+    w.client = type("C", (), {"moderations": type("M", (), {
+        "create": lambda self, **kw: type("Res", (), {"results": [mild]})()})()})()
+    w.check_output("나는 쿵 넘어졌어요.")                      # AI 글은 통과
+    with pytest.raises(StoryBlocked):
+        w.check_input("쿵 넘어졌어")                          # 아이 입력은 막는다

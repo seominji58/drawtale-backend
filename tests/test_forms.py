@@ -108,7 +108,7 @@ def test_short_story_tells_the_hero_form():
 
     seen: list[str] = []
     writer = object.__new__(StoryWriter)
-    writer.check_input = lambda text: None
+    writer.check_input = writer.check_output = lambda text: None
 
     def fake(system, user, json_mode, openai_tokens):
         seen.append(system)

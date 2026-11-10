@@ -24,7 +24,7 @@ import anthropic
 from app.core.config import get_settings
 from app.services import card_stories as cs
 from app.services import forms
-from app.services.book import OPENINGS, book_prompt, book_user_message
+from app.services.book import OPENINGS, body_problems, book_prompt, book_user_message
 from app.services.story_writer import get_story_writer
 from scripts import batch_card_stories as B
 
@@ -93,6 +93,7 @@ def run(form: str, limit: int | None, budget: float) -> None:
         text = "".join(b.text for b in msg.content if b.type == "text")
         try:
             payload, problems = B.read_base(c, text, writer)
+            problems += body_problems(cs.book_from_payload(payload, None), hero)   # 걷기 · 발 · 손 (11/10)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
             state["failed"][k] = state["failed"].get(k, 0) + 1
             bad += 1
@@ -126,7 +127,7 @@ def page_text(p: dict) -> str:
 
 def load_db(form: str, approve_clean: bool) -> None:
     """jsonl → card_stories 표. 검사(형식 · 카드 · 내용)를 통과한 것만 jsonl 에 있으니 approve_clean 이면 바로 approved.
-    단 주인공이 손 · 팔을 쓰는 글(HERO_HAND)은 draft"""
+    단 주인공이 손 · 팔을 쓰는 글(HERO_HAND)과 몸 규칙에 걸리는 글(book.body_problems, 11/10)은 draft"""
     from app.db.session import SessionLocal
     from app.models.card_story import CardStory
 
@@ -137,11 +138,12 @@ def load_db(form: str, approve_clean: bool) -> None:
             key = {k: r[k] for k in ("place", "problem", "action", "result", "length", "voice_mode")}
             row = db.query(CardStory).filter_by(**key, form=form).one_or_none() or CardStory(**key, form=form)
             row.payload, row.model, row.prompt_version = r["payload"], r["model"], r["prompt_version"]
-            hand = form != "biped" and HERO_HAND.search(" ".join(page_text(p) for p in r["payload"]["book"]["pages"]))
+            hand = form != "biped" and (HERO_HAND.search(" ".join(page_text(p) for p in r["payload"]["book"]["pages"]))
+                                        or body_problems(cs.book_from_payload(r["payload"], None), {"id": form}))
             ok = approve_clean and not hand
             row.status = "approved" if ok else "draft"
             row.reviewed_by = "auto-check" if ok else None
-            row.note = "주인공이 손 · 팔을 씀 — 이 형태에 맞지 않음" if hand else None
+            row.note = "주인공이 손 · 팔을 쓰거나 걸음, 이 형태에 맞지 않음" if hand else None
             counts[row.status] = counts.get(row.status, 0) + 1
             db.add(row)
         db.commit()

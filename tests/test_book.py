@@ -6,11 +6,15 @@ import pytest
 
 from app.services.book import (
     STAGES,
+    Book,
+    Page,
+    body_problems,
     book_problems,
     book_prompt,
     book_user_message,
     card_stem,
     fallback_book,
+    mentions,
     parse_book,
     scene_problems,
     split_pages,
@@ -184,6 +188,77 @@ def test_book_problems_finds_missing_card_and_dialogue():
     assert any("대사" in p for p in book_problems(talk, CHOICES, 7, characters=False))
 
 
+WINGED = {"id": "winged", "kid_label": "날개 달린 친구"}
+
+
+def _book(*texts, protagonist="", cast=None, lines=None):
+    pages = [Page(i + 1, "place", "idle", [(NARRATOR, t, "")]) for i, t in enumerate(texts)]
+    for n, extra in (lines or {}).items():
+        pages[n - 1].lines += extra
+    return Book("시험", pages, [1], protagonist=protagonist, cast=cast or {})
+
+
+@pytest.mark.parametrize("text", [
+    "나는 한 걸음씩 다가갔어요.",
+    "바람이 불자 발길을 멈췄어요.",
+    "나는 바닥을 짚고 일어섰어요.",
+    "친구가 울자 나는 손가락으로 길을 가리켰어요.",
+    "나는 천천히 다시 걸어도 괜찮았어요.",
+    "선생님 곁에서 콩콩, 운동장으로 함께 갔어요.",
+    "나는 의자에 앉아 쉬었어요.",
+])
+def test_body_problems_catches_winged_hero_walking_and_hands(text):
+    got = body_problems(_book(text), WINGED)
+    assert len(got) == 1 and got[0].startswith("1쪽 주인공 몸 규칙")
+
+
+@pytest.mark.parametrize("text", [
+    "친구가 달려왔어요.",
+    "나는 친구를 불렀고, 엄마가 손을 흔들었어요.",
+    "가슴이 콩콩 뛰었어요.",
+    "나는 다람쥐에게 말을 걸었어요.",
+    "나는 나뭇가지에 사뿐히 내려앉았어요.",
+    "어른은 손가락으로 길을 가리켰고, 나는 그 손끝을 따라 날아갔어요.",
+    "멀리서 콩콩 소리가 들렸어요.",
+    "나는 날개를 툭툭 털고 살금살금 날아갔어요.",
+])
+def test_body_problems_skips_other_people_and_other_meanings(text):
+    assert body_problems(_book(text), WINGED) == []
+
+
+def test_body_problems_by_form_and_speaker():
+    walk = _book("나는 공원을 천천히 걸어갔어요.", "나는 손을 흔들었어요.", "나는 꼬리를 흔들었어요.")
+    assert body_problems(walk, None) == []                     # 사람
+    assert [x[:2] for x in body_problems(walk, {"id": "quadruped"})] == ["2쪽", "3쪽"]   # 4족형은 걷기 된다
+    assert len(body_problems(walk, WINGED)) == 2               # 날개형은 걷기 · 손 (꼬리는 4족형만)
+    # 3인칭: 주인공 이름이 주어면 잡고, 다른 인물 이름 · 다른 인물 대사는 넘어간다
+    named = _book("토토가 살며시 걸어갔어요.", "콩이가 걸어왔어요.", protagonist="토토", cast={"콩이": "child"},
+                  lines={2: [("콩이", "나도 같이 걸어갈래!", "")]})
+    assert [x[:2] for x in body_problems(named, WINGED)] == ["1쪽"]
+
+
+# 걷기 · 손 카드도 날개 몸으로 바꿔 쓰면 카드 검사(mentions)와 몸 검사를 함께 지나야 한다
+@pytest.mark.parametrize("card, text", [
+    ("툭툭 털고 달려갔어요", "나는 날개를 툭툭 털고 빠르게 날아갔어요."),
+    ("천천히 다시 걸었어요", "나는 천천히 다시 날아올랐어요."),
+    ("살금살금 걸어갔어요", "나는 살금살금 낮게 날아갔어요."),
+    ("어른에게 달려갔어요", "나는 어른에게 빠르게 날아갔어요."),
+    ("주위를 살피며 걸었어요", "나는 주위를 살피며 낮게 날았어요."),
+    ("밝은 곳으로 달려갔어요", "나는 밝은 곳으로 빠르게 날아갔어요."),
+    ("손을 흔들어 웃게 했어요", "나는 날개를 흔들어 친구를 웃게 했어요."),
+])
+def test_body_rules_leave_room_for_every_card(card, text):
+    assert mentions(card, text)
+    assert body_problems(_book(text), WINGED) == []
+
+
+def test_book_problems_adds_body_rules_only_with_form():
+    pages = [*GOOD[:4], _page(5, "action", "나는 공룡에게 달려갔어요.", action="idle"), *GOOD[5:]]
+    book = parse_book(_raw(pages))
+    assert not any("몸 규칙" in p for p in book_problems(book, CHOICES, 7, characters=False))
+    assert any(p.startswith("5쪽 주인공 몸 규칙") for p in book_problems(book, CHOICES, 7, False, WINGED))
+
+
 def test_card_stem():
     assert card_stem("길을 잃었어요") == "길을 잃"
     assert card_stem("숲") == "숲"
@@ -299,6 +374,7 @@ def _writer(monkeypatch, claude):
     w = sw.StoryWriter("sk-test")
     w.claude = claude
     monkeypatch.setattr(w, "check_input", lambda text: None)
+    monkeypatch.setattr(w, "check_output", lambda text: None)
     return w
 
 
