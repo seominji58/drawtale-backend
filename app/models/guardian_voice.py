@@ -27,6 +27,6 @@ class GuardianVoice(IdMixin, TimestampMixin, Base):
     # ElevenLabs 목소리 id. 지우면 None (동의 기록은 남는다)
     elevenlabs_voice_id: Mapped[str | None] = mapped_column(String(64), default=None)
     # 동의한 안내문 판 (프론트 동의 화면의 판과 같다)
-    consent_version: Mapped[str] = mapped_column(String(20))
+    consent_version: Mapped[str] = mapped_column(String(40))
     consented_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
