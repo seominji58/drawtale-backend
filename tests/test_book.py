@@ -228,6 +228,8 @@ def test_body_problems_catches_winged_hero_walking_and_hands(text):
     "나는 고개를 끄덕끄덕하고 날아올랐어요.",
     "나는 날개를 꼭 오므리고 숨을 죽였어요.",
     "버섯 아래에서 날개를 접고 덜덜 떨었어요.",
+    "나는 무서워서 몸을 작게 웅크렸어요.",
+    "나는 쪼그리고 숨었어요.",
     "나는 기뻐서 빙글빙글 돌았어요.",
 ])
 def test_body_problems_skips_other_people_and_other_meanings(text):

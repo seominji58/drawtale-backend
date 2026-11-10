@@ -186,6 +186,11 @@ def test_winged_facing_and_body_rules():
 
     bird = [{"name": "body", "x": 50, "y": 50}, {"name": "head", "x": 20, "y": 30}, {"name": "wing1_root", "x": 55, "y": 40}]
     assert facing_of(bird) == "left" and facing_of([{**j, "x": 100 - j["x"]} for j in bird]) == "right"
+    # 앞에서 그린 새(머리가 몸통 바로 위) · 관절을 한 점에 모은 것은 앞모습 (11/10 몸짓 연출 시험)
+    front = [{"name": "body", "x": 50, "y": 60}, {"name": "head", "x": 52, "y": 30},
+             {"name": "wing1_tip", "x": 5, "y": 40}, {"name": "wing2_tip", "x": 95, "y": 40}]
+    assert facing_of(front) is None
+    assert facing_of([{"name": n, "x": 280, "y": 187} for n in ("body", "head", "wing1_root", "wing1_tip")]) is None
     rules = body_rules({"id": "winged"})
     assert "날개를 퍼덕이며 날아가기" in rules and rules.index("걷기") > rules.index("그 밖의 몸 움직임")
 

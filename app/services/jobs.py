@@ -87,13 +87,24 @@ def current_joints(character: Character) -> list[dict] | None:
     return character.ai_joints
 
 
+# 머리 · 몸 뒤쪽의 가로 차이가 관절 전체 폭의 이만큼도 안 되면 앞모습으로 본다 (11/10 몸짓 연출 실제 그림 시험 —
+# 앞에서 그린 새는 머리가 몸통 바로 위라 왼쪽 · 오른쪽이 아무렇게나 정해져, 정면을 보는 새가 옆으로 숙였다.
+# AI 가 날개형 관절을 한 점에 모아 줄 때(못 찾음)도 같다)
+FRONT_DX = 0.12
+
+
 def facing_of(joints: list[dict] | None) -> str | None:
     """옆모습 형태의 머리 쪽 — 머리가 몸 뒤쪽보다 왼쪽이면 left. 4족형은 목 · 엉덩이 (AI 렌더도 같은 기준으로
-    동작을 뒤집는다), 사슬형 · 지느러미형은 머리 · 꼬리 끝, 날개형은 머리 · 몸통."""
+    동작을 뒤집는다), 사슬형 · 지느러미형은 머리 · 꼬리 끝, 날개형은 머리 · 몸통. 앞모습이면 None (FRONT_DX)."""
     at = {j["name"]: j for j in joints or []}
+    xs = [j["x"] for j in at.values()]
+    spread = max(xs) - min(xs) if xs else 0
     for front, back in (("neck", "hip"), ("head", "tail"), ("head", "body")):     # 4족 · 사슬 · 지느러미 · 날개형
         if front in at and back in at:
-            return "left" if at[front]["x"] < at[back]["x"] else "right"
+            dx = at[front]["x"] - at[back]["x"]
+            if spread <= 0 or abs(dx) < FRONT_DX * spread:
+                return None
+            return "left" if dx < 0 else "right"
     return None
 
 
