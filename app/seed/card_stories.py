@@ -32,7 +32,8 @@ def export_seed(db, path: Path = SEED) -> int:
 
     from app.models.card_story import CardStory
 
-    rows = sorted((_row(r) for r in db.query(CardStory).filter_by(status="approved")),
+    # 사람형만 (형태별 이야기는 app/seed/form_stories.py 씨앗, 11/10)
+    rows = sorted((_row(r) for r in db.query(CardStory).filter_by(status="approved", form="biped")),
                   key=lambda d: tuple(d[k] for k in KEY))
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(json.dumps(d, ensure_ascii=False, sort_keys=True) + "\n" for d in rows).encode()
@@ -54,9 +55,10 @@ def load_seed(db, path: Path = SEED) -> dict[str, int]:
     count = {"new": 0, "updated": 0, "same": 0}
     for d in read_seed(path):
         key = {k: d[k] for k in KEY}
-        row = db.query(CardStory).filter_by(**key).one_or_none()
+        # 형태 칸이 생긴 뒤(11/9)로는 같은 조합에 날개형 · 4족형 줄도 있어 사람형만 본다 (전에는 둘이 잡혀 오류)
+        row = db.query(CardStory).filter_by(**key, form="biped").one_or_none()
         if row is None:
-            row = CardStory(**key)
+            row = CardStory(**key, form="biped")
             db.add(row)
             count["new"] += 1
         elif all(getattr(row, k) == d[k] for k in FIELDS):

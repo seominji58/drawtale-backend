@@ -237,6 +237,8 @@ def test_body_problems_catches_winged_hero_walking_and_hands(text):
     "그리고 손을 흔들듯 몸을 살랑살랑 흔들었어요.",
     "화살표가 반짝, 놀이터 쪽을 가리키고 있었어요.",
     "책을 안고 오시는 분은 도서관 선생님이었어요.",
+    "지킴이 어른이 빙그레 웃으며 저쪽을 가리켰어요.",
+    "어른은 저벅저벅 앞서 걸었어요.",
 ])
 def test_body_problems_skips_other_people_and_other_meanings(text):
     assert body_problems(_book(text), WINGED) == []

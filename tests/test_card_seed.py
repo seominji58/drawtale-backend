@@ -40,3 +40,43 @@ def test_export_then_load_round_trip(tmp_path):
         db.commit()
         assert load_seed(db, path) == {"new": 0, "updated": 1, "same": 0}  # 씨앗 내용으로 맞춘다
         assert db.query(CardStory).one().payload == {"text": "숲 이야기예요."}
+
+
+def test_form_seed_apply_and_biped_seed_side_by_side(tmp_path):
+    """형태별 씨앗(app/seed/form_stories.py, 마이그레이션 f1a2b3c4d5e6 가 배포 때 넣는다): 새로 · 같음 · 씨앗 내용으로 맞춤.
+    같은 조합에 날개형 줄이 있어도 사람형 씨앗 넣기가 사람형 줄만 본다 (11/10, 전에는 둘이 잡혀 오류)"""
+
+    from app.db.session import engine
+    from app.seed import form_stories
+
+    combo = dict(place="숲", problem="길을 잃었어요", action="그 자리에서 기다렸어요", result="길을 찾았어요", length="long", voice_mode="narration")
+    seed = [{**combo, "form": "winged", "payload": {"book": {"title": "날개"}}, "status": "approved", "model": "m",
+             "prompt_version": form_stories.VERSION, "reviewed_by": "auto-check", "note": None}]
+    with engine.begin() as c:
+        assert form_stories.apply(c, seed) == {"new": 1, "updated": 0, "same": 0}
+    with engine.begin() as c:
+        assert form_stories.apply(c, seed) == {"new": 0, "updated": 0, "same": 1}
+    with engine.begin() as c:
+        assert form_stories.apply(c, [{**seed[0], "status": "draft", "note": "검수 지적"}]) == {"new": 0, "updated": 1, "same": 0}
+    with SessionLocal() as db:
+        db.add(CardStory(**combo, payload={"book": {"title": "사람"}}, status="approved"))
+        db.commit()
+        path = tmp_path / "seed.jsonl.gz"
+        assert export_seed(db, path) == 1                      # 사람형만 (날개형은 draft 이기도 하고 형태도 다르다)
+        assert load_seed(db, path) == {"new": 0, "updated": 0, "same": 1}
+        assert db.query(CardStory).filter_by(form="winged").one().status == "draft"
+        db.query(CardStory).delete()
+        db.commit()
+
+
+def test_form_seed_file():
+    """씨앗 파일: 날개형 512 조합 모두 · 4족 · 사슬형은 고친 것만 approved, 이름 자리 · 형태 몸 규칙을 지나야 approved"""
+
+    from app.seed.form_stories import KEY as FKEY
+    from app.seed.form_stories import read_seed as read_form_seed
+
+    rows = read_form_seed()
+    assert len({tuple(d[k] for k in FKEY) for d in rows}) == len(rows)
+    winged = [d for d in rows if d["form"] == "winged"]
+    assert len(winged) == 512 and {d["status"] for d in rows if d["form"] != "winged"} == {"approved"}
+    assert all(d["note"] for d in winged if d["status"] == "draft")
