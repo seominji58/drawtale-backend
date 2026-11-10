@@ -280,6 +280,12 @@ ELEVENLABS_ADD_VOICE_URL = "https://api.elevenlabs.io/v1/voices/add"
 ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/v1/voices/{voice_id}"
 
 
+def voice_provider() -> str:
+    """새로 등록하는 녹음 목소리를 어디로 보내나 — 동의 화면이 받는 곳을 이것으로 보여 준다 (2026-11-10)."""
+
+    return "qwen" if get_settings().guardian_voice_provider == "qwen" else "elevenlabs"
+
+
 def voice_cloning_ready() -> bool:
     """녹음 목소리를 받을 수 있는지.
 
