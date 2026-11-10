@@ -239,6 +239,9 @@ def test_body_problems_catches_winged_hero_walking_and_hands(text):
     "책을 안고 오시는 분은 도서관 선생님이었어요.",
     "지킴이 어른이 빙그레 웃으며 저쪽을 가리켰어요.",
     "어른은 저벅저벅 앞서 걸었어요.",
+    # 운영 대본 고치기에서 괜히 고쳐진 것 (11/10): 물건이 가리킴 · 우는 친구의 작은 어깨
+    "표지판 화살표는 빨간 깃발 쪽을 가리켰어요.",
+    "훌쩍훌쩍, 작은 어깨가 들썩였어요.",
 ])
 def test_body_problems_skips_other_people_and_other_meanings(text):
     assert body_problems(_book(text), WINGED) == []
@@ -271,6 +274,7 @@ def test_prompt_rules_from_review():
 def test_body_problems_by_form_and_speaker():
     walk = _book("나는 공원을 천천히 걸어갔어요.", "나는 손을 흔들었어요.", "나는 꼬리를 흔들었어요.")
     assert body_problems(walk, None) == []                     # 사람
+    assert body_problems(_book("쌩, 꼬리별 하나가 내 앞을 지나갔어요."), {"id": "quadruped"}) == []   # 꼬리별 = 별똥별
     assert [x[:2] for x in body_problems(walk, {"id": "quadruped"})] == ["2쪽", "3쪽"]   # 4족형은 걷기 된다
     assert len(body_problems(walk, WINGED)) == 2               # 날개형은 걷기 · 손 (꼬리는 4족형만)
     # 3인칭: 주인공 이름이 주어면 잡고, 다른 인물 이름 · 다른 인물 대사는 넘어간다

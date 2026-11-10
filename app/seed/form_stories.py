@@ -10,6 +10,7 @@
   아니면 draft (검수 메모를 note 로)
 - 4족 · 사슬형 fixed-{형태}.jsonl (운영 대본 중 몸 규칙에 걸린 것을 틀린 쪽만 고친 것): 고친 것만 approved 로. 못 고친 것은 넣지 않는다
   (운영 대본 그대로)
+- draft 고치기 fixed-drafts5*.jsonl: 재검수를 지난 것만 approved 로 (날개형 · 4족 draft 를 고친 것)
 """
 
 from __future__ import annotations
@@ -92,6 +93,23 @@ def build(out: Path = SEED, storage: Path = Path("storage/card_stories")) -> dic
                          "form": form, "payload": r["payload"], "status": "approved", "model": "claude-opus-5-5",
                          "prompt_version": VERSION, "reviewed_by": "auto-check",
                          "note": "몸 규칙 고침 (11/10): " + "; ".join(r.get("problems_before") or [])})
+    # draft 고치기 (11/10 사용자 「draft 5편 고쳐」): fixed-drafts5*.jsonl 중 재검수를 지난 것은 approved 로 바꾼다 (나중 회차가 이긴다)
+    at = {tuple(d[k] for k in KEY): i for i, d in enumerate(rows)}
+    for path in sorted(storage.glob("fixed-drafts5*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            r = json.loads(line) if line.strip() else None
+            if not r or (r.get("review") or {}).get("verdict") != "pass":
+                continue
+            d = {**{k: r[k] for k in ("place", "problem", "action", "result")}, "length": "long", "voice_mode": "narration",
+                 "form": r["form"], "payload": r["payload"], "status": "approved", "model": "claude-opus-5-5",
+                 "prompt_version": VERSION, "reviewed_by": "auto-check+opus-review",
+                 "note": "draft 고침 (11/10): " + "; ".join(r.get("problems_before") or [])}
+            key = tuple(d[k] for k in KEY)
+            if key in at:
+                rows[at[key]] = d
+            else:
+                at[key] = len(rows)
+                rows.append(d)
     for d in rows:
         count[f"{d['form']}:{d['status']}"] = count.get(f"{d['form']}:{d['status']}", 0) + 1
     rows.sort(key=lambda d: tuple(d[k] for k in KEY))
