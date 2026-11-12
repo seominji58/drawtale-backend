@@ -106,3 +106,11 @@ def test_negated_mood_words_are_not_chosen(text, action):
 def test_walking_words_make_idle_page_walk(text):
     """걷는 글인데 가만히 쪽이면 제자리에 서 있었다 (11/9 테스트 2번) — 걷기로, 장면이 옮겨 간다"""
     assert liven(_book(("action", "idle", text))).pages[0].action == "walk"
+
+
+def test_stopped_walking_is_not_walk():
+    # 11/12 사용자: 「걱정이 되어 걸음을 멈췄어요」가 걷기라 주인공이 크게 깨졌다
+    pages = liven(_book(("problem", "idle", "토토는 걱정이 되어 걸음을 멈췄어요."),
+                        ("action", "idle", "한 걸음, 또 한 걸음 걸어갔어요."),
+                        ("action", "idle", "토토는 걸음을 멈추고 친구에게 다가갔어요."))).pages
+    assert [p.action for p in pages] == ["breathe", "walk", "walk"]

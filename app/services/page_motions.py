@@ -72,6 +72,8 @@ NEGATABLE = {"hooray", "shiver"}
 # 낱말 바로 앞 · 같은 문장 낱말 뒤에 있으면 아닌 말
 NEG_BEFORE = ("안 ", "안")
 NEG_AFTER = ("지 않", "지않", "사라졌", "사라지", "사라져")
+# 걷는 말인데 같은 문장에서 멈추면 걷기가 아니다 (11/12 사용자: 「걱정이 되어 걸음을 멈췄어요」가 걷기라 팔을 몸 앞에 그린 주인공이 크게 깨졌다)
+WALK_STOP = ("멈췄", "멈추", "멈춰", "멈칫", "세웠", "못 걷", "못 걸")
 _SENTENCE_END = ".!?\n”\""
 
 
@@ -83,10 +85,19 @@ def _negated(text: str, i: int, word: str) -> bool:
     return any(n in rest[:end] for n in NEG_AFTER)
 
 
+def _stopped(text: str, i: int, word: str) -> bool:
+    rest = text[i + len(word):]
+    end = min((rest.find(c) for c in _SENTENCE_END if c in rest), default=len(rest))
+    return any(n in rest[:end] for n in WALK_STOP)
+
+
 def _says(text: str, word: str, action: str) -> bool:
-    """text 에 word 가 (기분 낱말이면 아닌 말이 아니게) 나오나."""
+    """text 에 word 가 (기분 낱말이면 아닌 말이 아니게, 걷기면 멈춘 말이 아니게) 나오나."""
     i = text.find(word)
     while i >= 0:
+        if action == "walk" and _stopped(text, i, word):
+            i = text.find(word, i + 1)
+            continue
         if action not in NEGATABLE or not _negated(text, i, word):
             return True
         i = text.find(word, i + 1)
