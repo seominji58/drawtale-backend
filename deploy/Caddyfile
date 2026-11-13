@@ -1,0 +1,62 @@
+# 타임아웃은 사이트 안이 아니라 전역 설정에만 쓸 수 있다
+{
+	servers {
+		timeouts {
+			read_body 2m
+			write 2m
+		}
+	}
+}
+
+# 화면은 www.drawtale.kr, API 는 이 주소다. DNS A 레코드가 VM 을 가리키면 HTTPS 인증서를 자동으로 받는다.
+api.drawtale.kr {
+	reverse_proxy backend:8000
+
+	# 올리는 그림이 10MB 까지라 여유를 둔다 (MAX_UPLOAD_MB)
+	request_body {
+		max_size 20MB
+	}
+
+	# 보안 헤더 (2026-11-02). 백엔드도 nosniff · X-Frame-Options 를 붙인다
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	encode gzip
+	log {
+		output stdout
+	}
+}
+
+# 화면도 이 VM 이 준다. 빌드 결과는 deploy/www 에 둔다 (README)
+www.drawtale.kr {
+	root * /srv/www
+	try_files {path} /index.html
+	file_server
+	encode gzip
+
+	# 화면 파일(index.html)은 늘 새로 확인하게 한다. 안 그러면 브라우저가 옛 화면을 계속 써서
+	# 배포해도 반영이 안 된다 (2026-11-03). assets/ 는 파일 이름에 내용 해시가 붙어 오래 둬도 된다
+	@page not path /assets/*
+	header @page Cache-Control "no-cache"
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+
+	# 화면 보안 헤더 (2026-11-02). 프론트 public/staticwebapp.config.json 의 globalHeaders 와 같게 둔다
+	# 포트원 본인인증(2026-11-09): SDK(cdn.portone.io) · KG이니시스 인증 창(frame · form)
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.portone.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; worker-src 'self' blob:; frame-src https://*.portone.io https://*.inicis.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://*.portone.io https://*.inicis.com; object-src 'none'"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(self), microphone=(self), geolocation=(), payment=()"
+		-Server
+	}
+}
+
+drawtale.kr {
+	redir https://www.drawtale.kr{uri} permanent
+}
