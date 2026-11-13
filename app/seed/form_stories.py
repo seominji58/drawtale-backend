@@ -94,6 +94,27 @@ def build(out: Path = SEED, storage: Path = Path("storage/card_stories")) -> dic
                          "form": form, "payload": r["payload"], "status": "approved", "model": "claude-opus-5-5",
                          "prompt_version": VERSION, "reviewed_by": "auto-check",
                          "note": "몸 규칙 고침 (11/10): " + "; ".join(r.get("problems_before") or [])})
+    # 지느러미형 · 여러 다리형(촉수형) 20편씩 (11/13 사용자 「두 형태 대본도 운영에 반영해」): form-{형태}.jsonl 은 같은 조합을
+    # 두 번 만든 줄이 있어 나중 줄이 이긴다. 검수 통과 · 검수 고침이고 몸 규칙을 지나면 approved, 아니면 draft
+    for form in ("finned", "radial"):
+        path = storage / f"form-{form}.jsonl"
+        if not path.exists():
+            continue
+        last: dict[tuple, dict] = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                last[(r["place"], r["problem"], r["action"], r["result"])] = r
+        for r in last.values():
+            rv = r.get("review") or {}
+            body = body_problems(cs.book_from_payload(r["payload"], None), {"id": form})
+            passed = rv.get("verdict") == "pass" or bool(r.get("review_fixed"))
+            ok = passed and not body
+            note = None if ok else ("몸 규칙: " + "; ".join(body) if body else "검수 지적: " + "; ".join(
+                f"{i.get('page')}쪽 {i.get('note')}" for i in rv.get("issues") or []))
+            rows.append({**{k: r[k] for k in ("place", "problem", "action", "result", "length", "voice_mode")}, "form": form,
+                         "payload": r["payload"], "status": "approved" if ok else "draft", "model": r.get("model") or "claude-opus-5-5",
+                         "prompt_version": VERSION, "reviewed_by": "auto-check+opus-review" if ok else None, "note": note})
     # draft 고치기 (11/10 사용자 「draft 5편 고쳐」): fixed-drafts5*.jsonl 중 재검수를 지난 것은 approved 로 바꾼다 (나중 회차가 이긴다).
     # 처음부터 다시 쓴 것 (11/10 「2번 진행」): regen-*.jsonl (batch_form_stories 로 그 조합만 새로 쓴 것, 검수 통과 · 검수 고침)
     at = {tuple(d[k] for k in KEY): i for i, d in enumerate(rows)}
